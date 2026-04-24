@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Abraj Energy — Billing Data Extractor</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0b0f1a;--bg2:#111827;--bg3:#1e293b;--bg4:#293548;--border:#334155;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--blue:#3b82f6;--green:#10b981;--red:#ef4444;--orange:#f59e0b;--purple:#8b5cf6;--cyan:#06b6d4}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:13px;overflow-x:hidden}
+
+/* NAV */
+.nav{position:sticky;top:0;z-index:100;background:rgba(11,15,26,.95);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;height:40px;gap:12px}
+.nav-brand{font-weight:800;font-size:1.1rem;color:var(--cyan)}
+.nav-sub{color:var(--text3);font-size:.82rem}
+.nav-right{margin-left:auto;display:flex;gap:10px}
+.btn{padding:8px 16px;font-size:.8rem;font-weight:600;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-green{background:var(--green);border-color:var(--green);color:#000}.btn-green:hover{background:#059669}
+.btn-red{background:var(--red);border-color:var(--red);color:#fff}
+.btn-sm{padding:4px 10px;font-size:.72rem}
+
+.container{max-width:100%;margin:0 auto;padding:10px 16px}
+
+/* LAYOUT: 2 panels */
+.layout{display:grid;grid-template-columns:200px 1fr;gap:10px;height:calc(100vh - 56px)}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+/* LEFT: RIG LIST */
+.rig-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;height:100%;padding-right:4px}
+.rig-item{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:5px 8px;cursor:pointer;transition:all .15s;overflow:hidden;flex-shrink:0}
+.rig-item:hover{border-color:var(--blue)}
+.rig-item.active{border-color:var(--cyan);background:var(--bg3)}
+.rig-item.has-data{border-left:3px solid var(--green)}
+.rig-item .r-num{font-family:'JetBrains Mono',monospace;font-size:.9rem;font-weight:800;color:var(--cyan)}
+.rig-item .r-cust{font-size:.55rem;font-weight:600;padding:0 4px;border-radius:2px;display:inline-block}
+.rig-item .r-status{font-size:.55rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rig-item .r-days{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:var(--text3)}
+.rig-item.has-data .r-days{color:var(--green)}
+.rig-item.partial{border-left:3px solid var(--orange)}
+.rig-item.partial .r-days{color:var(--orange)}
+.rig-item.complete{border-left:3px solid var(--green)}
+
+/* 31-DAY TIMELINE — fully inside card, bigger bars */
+.timeline-31{display:flex;gap:1px;margin-top:3px;width:100%}
+.day-cell{flex:1;min-width:0;height:10px;border-radius:1px;position:relative;cursor:default}
+.day-cell.full{background:var(--green)}
+.day-cell.partial-day{background:var(--orange)}
+.day-cell.missing{background:var(--red);opacity:.5}
+.day-cell.empty{background:var(--bg4);opacity:.3}
+.day-cell:hover{transform:scaleY(2);z-index:2}
+.day-cell[title]:hover::after{content:attr(title);position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border);padding:2px 6px;border-radius:3px;font-size:.5rem;white-space:nowrap;z-index:10;color:var(--text)}
+.missing-summary{font-size:.5rem;color:var(--red);margin-top:1px;font-weight:500}
+
+/* RIGHT: MAIN PANEL */
+.main-panel{display:flex;flex-direction:column;gap:8px;overflow-y:auto;height:100%}
+
+/* DROP ZONE */
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:20px 16px;text-align:center;transition:all .3s;background:var(--bg2);cursor:pointer}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--cyan);background:rgba(6,182,212,.05)}
+.drop-zone.dragover{box-shadow:0 0 30px rgba(6,182,212,.15)}
+.drop-zone input[type="file"]{display:none}
+
+/* STEP INDICATOR */
+.steps{display:flex;gap:3px;margin-bottom:6px}
+.step{flex:1;padding:4px;text-align:center;font-size:.65rem;font-weight:600;border-radius:4px;background:var(--bg3);color:var(--text3)}
+.step.active{background:var(--blue);color:#fff}
+.step.done{background:rgba(16,185,129,.2);color:var(--green)}
+
+/* PREVIEW TABLE */
+.preview-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.preview-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.preview-scroll{overflow:auto;max-height:350px}
+.preview-table{width:100%;border-collapse:collapse;font-size:.72rem;font-family:'JetBrains Mono',monospace}
+.preview-table th{background:var(--bg4);padding:6px 8px;text-align:left;position:sticky;top:0;z-index:3;color:var(--text3);font-size:.65rem;white-space:nowrap}
+.preview-table td{padding:4px 8px;border-bottom:1px solid rgba(51,65,85,.3);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.preview-table tr:hover td{background:rgba(59,130,246,.05)}
+.preview-table tr.header-row td{background:rgba(6,182,212,.15);font-weight:700;color:var(--cyan)}
+.preview-table .row-num{color:var(--text3);font-size:.65rem;min-width:28px;text-align:right;padding-right:8px}
+
+/* MAPPING PANEL */
+.mapping-panel{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+.mapping-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.map-item{background:var(--bg3);border-radius:6px;padding:8px 10px}
+.map-item label{display:block;font-size:.65rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.map-item select{width:100%;background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:.78rem;font-family:'Inter',sans-serif}
+.map-item select:focus{outline:none;border-color:var(--cyan)}
+.map-item select option{background:var(--bg3)}
+.map-item.mapped select{border-color:var(--green);background:rgba(16,185,129,.08)}
+.map-item.unmapped select{border-color:var(--orange)}
+
+/* RESULT TABLE (editable) */
+.result-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.result-scroll{overflow:auto;flex:1}
+.result-table{width:100%;border-collapse:collapse;font-size:.75rem;min-width:auto}
+.result-table th{background:var(--bg4);padding:4px 6px;text-align:center;position:sticky;top:0;z-index:3;font-size:.62rem;text-transform:uppercase;letter-spacing:.3px;color:var(--text3);white-space:nowrap}
+.result-table th.cat-meta{background:#1e3a5f}
+.result-table th.cat-hrs{background:#1e4d3a}
+.result-table th.cat-obm{background:#3a2e1e}
+.result-table th.cat-ops{background:#3a1e3a}
+.result-table td{padding:3px 5px;border-bottom:1px solid rgba(51,65,85,.3);text-align:center;font-family:'JetBrains Mono',monospace;font-size:.7rem}
+.result-table td.editable{cursor:text}
+.result-table td.editable:focus{outline:2px solid var(--cyan);outline-offset:-1px;background:rgba(6,182,212,.1)}
+.result-table td.text-cell{text-align:left;font-family:'Inter',sans-serif;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-table tr:hover td{background:rgba(59,130,246,.04)}
+.result-table tr.invalid td{background:rgba(239,68,68,.06)}
+.result-table tfoot td{background:var(--bg3);font-weight:700}
+
+/* EXPORT BAR */
+.export-bar{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
+.stat{font-size:.82rem;display:flex;align-items:center;gap:4px}
+.stat strong{font-family:'JetBrains Mono',monospace;color:var(--cyan)}
+
+/* LOG */
+.log{background:var(--bg3);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:.68rem;max-height:150px;overflow-y:auto}
+.log-line{padding:1px 0;color:var(--text2)}.log-line.ok{color:var(--green)}.log-line.err{color:var(--red)}.log-line.info{color:var(--cyan)}
+
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
+
+/* ===== Simplified Step 2 & 3 styling ===== */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.card-title{font-size:.78rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card-title .badge{background:var(--cyan);color:#000;padding:1px 6px;border-radius:10px;font-size:.62rem;font-weight:800;text-transform:none;letter-spacing:0}
+.hint{font-size:.72rem;color:var(--text3);line-height:1.4}
+.hint.warn{color:var(--orange)}
+.hint.ok{color:var(--green)}
+
+/* Info pills — detected meta at a glance */
+.info-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.pill{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:6px 10px;display:flex;flex-direction:column;gap:2px;min-width:100px}
+.pill label{font-size:.6rem;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.pill input,.pill select{background:transparent;border:none;color:var(--text);font-size:.85rem;font-weight:600;font-family:'JetBrains Mono',monospace;padding:0;outline:none;width:100%}
+.pill input:focus,.pill select:focus{color:var(--cyan)}
+.pill.pill-rig{border-color:var(--cyan)}
+.pill.pill-rig input{color:var(--cyan)}
+
+/* Mapping groups */
+.map-group{margin-bottom:10px}
+.map-group-title{font-size:.7rem;font-weight:700;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.map-group-title .chev{transition:transform .15s}
+.map-group.collapsed .chev{transform:rotate(-90deg)}
+.map-group.collapsed .mapping-grid{display:none}
+.map-group-title .count-mapped{margin-left:auto;font-size:.6rem;color:var(--text3);font-weight:400}
+.map-group-title .count-mapped.all{color:var(--green)}
+
+/* Step 2 hint banner */
+.step-hint{background:rgba(6,182,212,.08);border-left:3px solid var(--cyan);padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:.78rem;color:var(--text2);line-height:1.4}
+
+/* CTA button — bigger, clearer */
+.btn-cta{padding:10px 20px;font-size:.85rem;font-weight:700}
+
+/* Step 3 summary strip */
+.summary-strip{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:linear-gradient(90deg,rgba(59,130,246,.1),rgba(6,182,212,.05));border-radius:8px;margin-bottom:8px;border:1px solid var(--border)}
+.summary-strip .sum-item{display:flex;flex-direction:column;gap:1px}
+.summary-strip .sum-label{font-size:.58rem;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.summary-strip .sum-val{font-size:1rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text)}
+.summary-strip .sum-val.ok{color:var(--green)}
+.summary-strip .sum-val.warn{color:var(--orange)}
+.summary-strip .sum-val.bad{color:var(--red)}
+
+/* Row status cell */
+.row-status{width:24px;text-align:center;font-weight:700;font-size:.75rem}
+.row-status.ok{color:var(--green)}
+.row-status.warn{color:var(--orange)}
+.row-status.bad{color:var(--red)}
+
+/* Column group header (second row of <thead>) */
+.grp-hdr th{padding:2px 4px !important;font-size:.55rem !important;background:var(--bg3) !important;border-bottom:2px solid var(--bg4) !important;text-transform:uppercase;letter-spacing:.4px}
+.grp-hdr th.grp-hrs{color:var(--green)}
+.grp-hdr th.grp-obm{color:var(--orange)}
+.grp-hdr th.grp-ops{color:var(--purple)}
+
+
+/* ===== Integrated Executive Summary ===== */
+.view-tabs{display:flex;gap:6px;align-items:center;margin-left:8px}.view-tab{padding:5px 11px;font-size:.72rem;font-weight:700;border:1px solid var(--border);border-radius:7px;background:var(--bg2);color:var(--text2);cursor:pointer;text-decoration:none;transition:all .2s}.view-tab:hover,.view-tab.active{border-color:var(--cyan);color:var(--cyan);background:rgba(6,182,212,.08)}#summaryView{display:none;padding:14px 16px 28px;max-width:1600px;margin:0 auto}.summary-section{margin-bottom:16px}.summary-title{font-size:1.25rem;font-weight:800;margin-bottom:3px;color:var(--text);display:flex;align-items:center;gap:8px}.summary-sub{font-size:.78rem;color:var(--text3);margin-bottom:12px}.summary-grid{display:grid;gap:10px}.summary-g2{grid-template-columns:repeat(2,minmax(0,1fr))}.summary-g3{grid-template-columns:repeat(3,minmax(0,1fr))}.summary-g4{grid-template-columns:repeat(4,minmax(0,1fr))}.summary-g6{grid-template-columns:repeat(6,minmax(0,1fr))}.summary-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}.summary-card-title{font-size:.66rem;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}.summary-kpi{text-align:center}.summary-kpi .val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:800;line-height:1}.summary-kpi .label{font-size:.62rem;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-top:5px}.summary-kpi .note{font-size:.65rem;color:var(--text2);margin-top:3px}.summary-chart{position:relative;height:260px}.summary-table-wrap{overflow:auto;max-height:520px}.summary-table{width:100%;border-collapse:collapse;font-size:.74rem}.summary-table th{position:sticky;top:0;background:var(--bg4);color:var(--text3);padding:7px 8px;text-align:left;text-transform:uppercase;font-size:.6rem;letter-spacing:.4px;z-index:1}.summary-table td{padding:6px 8px;border-bottom:1px solid rgba(51,65,85,.4)}.summary-table .num{text-align:right;font-family:'JetBrains Mono',monospace}.summary-table tr:hover td{background:rgba(59,130,246,.05)}.qc-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:5px;font-size:.62rem;font-weight:800}.qc-ok{background:rgba(16,185,129,.15);color:var(--green)}.qc-warn{background:rgba(245,158,11,.15);color:var(--orange)}.qc-bad{background:rgba(239,68,68,.15);color:var(--red)}.summary-heatmap{display:grid;grid-template-columns:70px repeat(var(--days,31), minmax(18px,1fr));gap:2px;min-width:820px}.summary-heat-label{font-size:.64rem;color:var(--text3);display:flex;align-items:center;justify-content:flex-end;padding-right:5px}.summary-day-head{font-size:.55rem;color:var(--text3);text-align:center}.summary-heat-cell{height:18px;border-radius:3px;font-size:.5rem;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace}.summary-heat-cell.full{background:var(--green);color:#001b10}.summary-heat-cell.partial{background:var(--orange);color:#1d1200}.summary-heat-cell.missing{background:rgba(239,68,68,.55);color:#fff}.summary-heat-cell.empty{background:rgba(100,116,139,.25);color:var(--text3)}.summary-empty{border:1px dashed var(--border);border-radius:12px;padding:28px;text-align:center;color:var(--text3);background:rgba(17,24,39,.55)}@media(max-width:1100px){.summary-g4,.summary-g6{grid-template-columns:repeat(2,1fr)}.summary-g3{grid-template-columns:1fr}.summary-g2{grid-template-columns:1fr}}@media(max-width:700px){.view-tabs{order:3;width:100%;margin:6px 0}.nav{height:auto;min-height:40px;flex-wrap:wrap}.summary-g4,.summary-g6{grid-template-columns:1fr}}
+
+
+.qc-health-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}.qc-health-card{background:linear-gradient(135deg,rgba(17,24,39,.98),rgba(30,41,59,.72));border:1px solid var(--border);border-radius:10px;padding:12px}.qc-health-card .big{font-family:'JetBrains Mono',monospace;font-size:1.45rem;font-weight:900;line-height:1}.qc-health-card .small{font-size:.65rem;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-top:4px}.qc-health-card .sub{font-size:.68rem;color:var(--text2);margin-top:3px}.toolbar-sep{width:1px;height:22px;background:var(--border);display:inline-block}.conf-row{background:rgba(245,158,11,.06)}.bad-row{background:rgba(239,68,68,.06)}.ok-row{background:rgba(16,185,129,.04)}@media(max-width:900px){.qc-health-row{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.qc-health-row{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-brand">ABRAJ ENERGY</div>
+  <div class="nav-sub">Billing Extractor &mdash; Preview, Map & Edit</div>
+  <div class="nav-right">
+    <select id="monthSelect" class="btn btn-sm" style="background:var(--bg3);color:var(--text);min-width:60px" onchange="onMonthYearChange()">
+      <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option>
+      <option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option>
+      <option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+    </select>
+    <input id="yearInput" type="number" class="btn btn-sm" style="background:var(--bg3);color:var(--text);width:70px;text-align:center" value="2026" min="2020" max="2035" onchange="onMonthYearChange()">
+    <div class="view-tabs"><button id="tabExtraction" class="view-tab active" onclick="showAppView('extraction')">Upload / Extraction</button><button id="tabSummary" class="view-tab" onclick="showAppView('summary')">Executive Summary</button></div>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('fileInput').click()">&#8682; Upload Files</button>
+    <button class="btn btn-sm" onclick="document.getElementById('logBox').style.display=document.getElementById('logBox').style.display==='none'?'block':'none'">Log</button>
+    <button class="btn btn-sm" onclick="exportExceptionReport()">QC Exceptions</button>
+    <button class="btn btn-sm" onclick="exportJSON()">Export JSON</button>
+    <button class="btn btn-sm" onclick="document.getElementById('jsonImportInput').click()">Import JSON</button>
+    <input id="jsonImportInput" type="file" accept=".json,application/json" style="display:none" onchange="importJSONFile(this.files[0]);this.value=''">
+    <button class="btn btn-green btn-sm" onclick="exportAll()">Download Excel</button>
+  </div>
+</nav>
+
+<div id="extractionView">
+<div class="container">
+<div class="layout">
+
+<!-- LEFT: RIG LIST -->
+<div class="rig-list" id="rigList"></div>
+
+<!-- RIGHT: MAIN PANEL -->
+<div class="main-panel" id="mainPanel">
+
+  <!-- Step indicator -->
+  <div class="steps" id="steps">
+    <div class="step active" id="step1">1. Drop File</div>
+    <div class="step" id="step2">2. Preview & Map</div>
+    <div class="step" id="step3">3. Review & Edit</div>
+  </div>
+
+  <!-- FLEET OVERVIEW (shows when data loaded) -->
+  <div id="fleetOverview" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:4px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <strong style="font-size:.7rem;white-space:nowrap">Fleet</strong>
+      <div id="fleetGrid" style="display:flex;gap:2px;flex:1"></div>
+      <span id="fleetSummary" style="font-size:.6rem;color:var(--text3);white-space:nowrap"></span>
+    </div>
+    <div id="fleetMissing" style="display:none"></div>
+  </div>
+
+  <!-- STEP 1: DROP -->
+  <div id="panelDrop">
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div style="font-size:2rem;margin-bottom:6px">&#128203;</div>
+      <div style="font-size:.9rem;color:var(--text2)">Drop billing file here or click to browse</div>
+      <div style="font-size:.75rem;color:var(--text3);margin-top:4px">.xlsx, .xls, .pdf &mdash; Rig auto-detected from filename</div>
+      <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.pdf">
+    </div>
+  </div>
+
+  <!-- STEP 2: PREVIEW + MAPPING (simplified) -->
+  <div id="panelPreview" style="display:none">
+
+    <!-- 2.1  What we detected: meta pills -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">1</span>
+        File info
+        <span id="previewFileName" style="margin-left:auto;color:var(--text2);font-weight:500;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="info-pills">
+        <div class="pill pill-rig"><label>Rig #</label><input id="metaRig" placeholder="—"></div>
+        <div class="pill"><label>Customer</label>
+          <select id="metaCust">
+            <option>PDO</option><option>OXY</option><option>OQ</option><option>ARA</option><option>Medco</option><option>BP</option>
+          </select>
+        </div>
+        <div class="pill" style="flex:1;min-width:160px"><label>Well</label><input id="metaWell" placeholder="—"></div>
+        <div class="pill"><label>Contract</label><input id="metaContract" placeholder="—"></div>
+        <div class="pill"><label>P.O</label><input id="metaPO" placeholder="—"></div>
+        <div class="pill"><label>Sheet</label>
+          <select id="sheetSelect" onchange="switchSheet()"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2.2  Preview: click-to-set-header -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">2</span>
+        Preview
+        <span id="previewSheetInfo" style="margin-left:auto;color:var(--text3);font-weight:500;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="step-hint" id="headerRowHint">
+        Click the row that contains the column names (Date, Operating, Total…).
+        We auto-detected row <b id="detectedHeaderRowNum">—</b> — click any other row to change it.
+      </div>
+      <div class="preview-scroll" id="previewScroll" style="max-height:280px"></div>
+    </div>
+
+    <!-- 2.3  Column mapping — essentials shown, details collapsible -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">3</span>
+        Column mapping
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0" id="mapStatus"></span>
+      </div>
+
+      <div class="map-group" id="grpEssentials">
+        <div class="map-group-title" onclick="toggleGroup('grpEssentials')">
+          <span class="chev">&#9662;</span> Essentials (required)
+          <span class="count-mapped" id="cntEssentials"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridEssentials"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpHours">
+        <div class="map-group-title" onclick="toggleGroup('grpHours')">
+          <span class="chev">&#9662;</span> Other hours
+          <span class="count-mapped" id="cntHours"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridHours"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpObm">
+        <div class="map-group-title" onclick="toggleGroup('grpObm')">
+          <span class="chev">&#9662;</span> OBM (if present)
+          <span class="count-mapped" id="cntObm"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridObm"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpText">
+        <div class="map-group-title" onclick="toggleGroup('grpText')">
+          <span class="chev">&#9662;</span> Operation / Remarks
+          <span class="count-mapped" id="cntText"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridText"></div>
+      </div>
+
+      <input id="metaHeaderRow" type="hidden">
+    </div>
+
+    <!-- 2.4  Action bar -->
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0">
+      <button class="btn btn-red btn-sm" onclick="cancelPreview()">Cancel</button>
+      <button class="btn btn-sm" onclick="autoMap()">Re-detect</button>
+      <button class="btn btn-sm" onclick="skipFile()" id="skipBtn" style="display:none">Skip this file</button>
+      <button class="btn btn-green btn-sm" id="extractAllBtn" style="display:none;margin-left:auto" onclick="extractAllSheets()">Extract all sheets at once</button>
+      <button class="btn btn-primary btn-cta" id="btnExtract" style="margin-left:auto" onclick="applyMapping()">Extract data &rarr;</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: RESULT (simplified) -->
+  <div id="panelResult" style="display:none">
+
+    <!-- 3.1 Summary strip (single line: rig · customer · well · days · completeness) -->
+    <div id="resultSummary" class="summary-strip"></div>
+
+    <!-- 3.2 Timeline (compact) -->
+    <div class="card" id="resultTimelineCard">
+      <div class="card-title">
+        <span class="badge">&#128197;</span>
+        <span id="resultTimelineTitle">Month timeline</span>
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0">
+          <span style="color:var(--green)">&#9632;</span> Full day &nbsp;
+          <span style="color:var(--orange)">&#9632;</span> Partial &nbsp;
+          <span style="color:var(--red)">&#9632;</span> Missing
+        </span>
+      </div>
+      <div id="resultTimeline"></div>
+    </div>
+
+    <!-- 3.3 Data table -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="card-title" style="padding:10px 14px 6px;margin-bottom:0;border-bottom:1px solid var(--border)">
+        <span class="badge">&#128203;</span>
+        Daily rows
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0">Click any cell to edit. Total recalculates automatically.</span>
+      </div>
+      <div class="result-scroll" id="resultScroll" style="max-height:calc(100vh - 440px)"></div>
+    </div>
+
+    <!-- 3.4 Warnings -->
+    <div id="resultWarnings"></div>
+
+    <!-- 3.5 Action bar -->
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 0;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="goBackToPreview()">&larr; Back to mapping</button>
+      <span id="resultTitle" style="color:var(--text3);font-size:.8rem;margin-left:6px"></span>
+      <button class="btn btn-green btn-sm" id="acceptAllBtn" style="display:none;margin-left:auto" onclick="acceptAllRemaining()">Accept all remaining</button>
+      <button class="btn btn-primary btn-cta" style="margin-left:auto" onclick="acceptData()">Save &amp; continue &rarr;</button>
+    </div>
+  </div>
+
+  <!-- LOG -->
+  <div id="logBox" style="display:none;margin-top:8px"><div class="log" id="logEl"></div></div>
+
+  <!-- EXPORT BAR -->
+  <div class="export-bar" style="margin-top:auto">
+    <div style="display:flex;gap:16px">
+      <div class="stat">Rigs: <strong id="sRigs">0</strong></div>
+      <div class="stat">Rows: <strong id="sRows">0</strong></div>
+      <div class="stat">Oper: <strong id="sOper">0</strong> hrs</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" onclick="manualSaveSession()">Save Session</button>
+      <button class="btn btn-sm" onclick="manualLoadSession()">Load Session</button>
+      <button class="btn btn-sm" onclick="exportExceptionReport()">QC Report</button>
+      <button class="btn btn-sm" onclick="exportJSON()">JSON</button>
+      <button class="btn btn-sm" onclick="clearAll()">Clear All</button>
+      <button class="btn btn-green btn-sm" onclick="exportAll()">Download Excel</button>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- INTEGRATED EXECUTIVE SUMMARY VIEW -->
+<div id="summaryView">
+  <div class="summary-section">
+    <div class="summary-title">Executive Summary</div>
+    <div class="summary-sub" id="summarySubtitle">Upload billing files to generate a live executive summary.</div>
+    <div id="summaryEmpty" class="summary-empty">No extracted records yet. Upload PDF or Excel billing files in the Upload / Extraction tab.</div>
+    <div id="summaryContent" style="display:none">
+      <div class="summary-grid summary-g6" style="margin-bottom:12px">
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--cyan)" id="kpiActiveRigs">0</div><div class="label">Active Rigs</div><div class="note" id="kpiCustomers">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--green)" id="kpiSubmittedDays">0</div><div class="label">Submitted Days</div><div class="note" id="kpiExpectedDays">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--blue)" id="kpiOperating">0</div><div class="label">Operating Hrs</div><div class="note" id="kpiUtil">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--orange)" id="kpiReduced">0</div><div class="label">Reduced Hrs</div><div class="note" id="kpiReducedPct">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--red)" id="kpiMissingHrs">0</div><div class="label">QC Missing Hrs</div><div class="note" id="kpiMissingDays">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--purple)" id="kpiTotalBilled">0</div><div class="label">Total Billed Hrs</div><div class="note">All categories</div></div>
+      </div>
+      <div class="qc-health-row" id="qcHealthRow">
+        <div class="qc-health-card"><div class="big" style="color:var(--green)" id="kpiQCCompletion">0%</div><div class="small">Fleet Submission Completion</div><div class="sub" id="kpiQCCompletionNote">Full-month rule</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--cyan)" id="kpiFullRigs">0/0</div><div class="small">Complete Rigs</div><div class="sub">24h × every calendar day</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--orange)" id="kpiReviewRigs">0</div><div class="small">Rigs Needing Review</div><div class="sub" id="kpiReviewRigsNote">Missing / partial / over 24h</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--red)" id="kpiCriticalExceptions">0</div><div class="small">Critical Exceptions</div><div class="sub">Missing full days + over 24h</div></div>
+      </div>
+      <div class="summary-grid summary-g3 summary-section">
+        <div class="summary-card"><div class="summary-card-title">Hours Distribution</div><div class="summary-chart"><canvas id="summaryHoursPie"></canvas></div></div>
+        <div class="summary-card"><div class="summary-card-title">Operating Hours by Customer</div><div class="summary-chart"><canvas id="summaryCustomerBar"></canvas></div></div>
+        <div class="summary-card"><div class="summary-card-title">Daily Submitted vs Expected Hours</div><div class="summary-chart"><canvas id="summaryDailyLine"></canvas></div></div>
+      </div>
+      <div class="summary-grid summary-g2 summary-section">
+        <div class="summary-card"><div class="summary-card-title">Rig QC Status</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Days</th><th class="num">Total Hrs</th><th class="num">Missing Hrs</th><th>Status</th></tr></thead><tbody id="summaryRigTable"></tbody></table></div></div>
+        <div class="summary-card"><div class="summary-card-title">Customer Summary</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Customer</th><th class="num">Rigs</th><th class="num">Operating</th><th class="num">Total</th><th class="num">Missing Hrs</th></tr></thead><tbody id="summaryCustomerTable"></tbody></table></div></div>
+      </div>
+      <div class="summary-section summary-card"><div class="summary-card-title">Submission QC Timeline — Full Month by Rig</div><div style="overflow:auto"><div class="summary-heatmap" id="summaryHeatmap"></div></div><div style="font-size:.68rem;color:var(--text3);margin-top:8px"><span style="color:var(--green)">■</span> 24h complete &nbsp; <span style="color:var(--orange)">■</span> partial day &nbsp; <span style="color:var(--red)">■</span> missing day &nbsp; <span style="color:var(--text3)">■</span> no file = missing</div></div>
+      <div class="summary-section summary-card"><div class="summary-card-title">QC Exception Report <button class="btn btn-sm" style="float:right;margin-top:-4px" onclick="exportExceptionReport()">Export QC Excel</button></div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Date</th><th class="num">Submitted</th><th class="num">Missing</th><th>Issue</th><th>Action Required</th></tr></thead><tbody id="summaryExceptionTable"></tbody></table></div></div>
+      <div class="summary-section summary-card"><div class="summary-card-title">Extracted Records</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Well</th><th>Date</th><th class="num">Operating</th><th class="num">Reduced</th><th class="num">Breakdown</th><th class="num">Rig Move</th><th class="num">Total</th><th>QC</th></tr></thead><tbody id="summaryRecordsTable"></tbody></table></div></div>
+    </div>
+  </div>
+</div>
+
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

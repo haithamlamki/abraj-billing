@@ -1,0 +1,2317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Abraj Energy — Billing Data Extractor</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0b0f1a;--bg2:#111827;--bg3:#1e293b;--bg4:#293548;--border:#334155;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--blue:#3b82f6;--green:#10b981;--red:#ef4444;--orange:#f59e0b;--purple:#8b5cf6;--cyan:#06b6d4}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:13px;overflow-x:hidden}
+
+/* NAV */
+.nav{position:sticky;top:0;z-index:100;background:rgba(11,15,26,.95);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;height:40px;gap:12px}
+.nav-brand{font-weight:800;font-size:1.1rem;color:var(--cyan)}
+.nav-sub{color:var(--text3);font-size:.82rem}
+.nav-right{margin-left:auto;display:flex;gap:10px}
+.btn{padding:8px 16px;font-size:.8rem;font-weight:600;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-green{background:var(--green);border-color:var(--green);color:#000}.btn-green:hover{background:#059669}
+.btn-red{background:var(--red);border-color:var(--red);color:#fff}
+.btn-sm{padding:4px 10px;font-size:.72rem}
+
+.container{max-width:100%;margin:0 auto;padding:10px 16px}
+
+/* LAYOUT: 2 panels */
+.layout{display:grid;grid-template-columns:200px 1fr;gap:10px;height:calc(100vh - 56px)}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+/* LEFT: RIG LIST */
+.rig-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;height:100%;padding-right:4px}
+.rig-item{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:5px 8px;cursor:pointer;transition:all .15s;overflow:hidden;flex-shrink:0}
+.rig-item:hover{border-color:var(--blue)}
+.rig-item.active{border-color:var(--cyan);background:var(--bg3)}
+.rig-item.has-data{border-left:3px solid var(--green)}
+.rig-item .r-num{font-family:'JetBrains Mono',monospace;font-size:.9rem;font-weight:800;color:var(--cyan)}
+.rig-item .r-cust{font-size:.55rem;font-weight:600;padding:0 4px;border-radius:2px;display:inline-block}
+.rig-item .r-status{font-size:.55rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rig-item .r-days{font-family:'JetBrains Mono',monospace;font-size:.7rem;font-weight:700;color:var(--text3)}
+.rig-item.has-data .r-days{color:var(--green)}
+.rig-item.partial{border-left:3px solid var(--orange)}
+.rig-item.partial .r-days{color:var(--orange)}
+.rig-item.complete{border-left:3px solid var(--green)}
+
+/* 31-DAY TIMELINE — fully inside card, bigger bars */
+.timeline-31{display:flex;gap:1px;margin-top:3px;width:100%}
+.day-cell{flex:1;min-width:0;height:10px;border-radius:1px;position:relative;cursor:default}
+.day-cell.full{background:var(--green)}
+.day-cell.partial-day{background:var(--orange)}
+.day-cell.missing{background:var(--red);opacity:.5}
+.day-cell.empty{background:var(--bg4);opacity:.3}
+.day-cell:hover{transform:scaleY(2);z-index:2}
+.day-cell[title]:hover::after{content:attr(title);position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border);padding:2px 6px;border-radius:3px;font-size:.5rem;white-space:nowrap;z-index:10;color:var(--text)}
+.missing-summary{font-size:.5rem;color:var(--red);margin-top:1px;font-weight:500}
+
+/* RIGHT: MAIN PANEL */
+.main-panel{display:flex;flex-direction:column;gap:8px;overflow-y:auto;height:100%}
+
+/* DROP ZONE */
+.drop-zone{border:2px dashed var(--border);border-radius:8px;padding:20px 16px;text-align:center;transition:all .3s;background:var(--bg2);cursor:pointer}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--cyan);background:rgba(6,182,212,.05)}
+.drop-zone.dragover{box-shadow:0 0 30px rgba(6,182,212,.15)}
+.drop-zone input[type="file"]{display:none}
+
+/* STEP INDICATOR */
+.steps{display:flex;gap:3px;margin-bottom:6px}
+.step{flex:1;padding:4px;text-align:center;font-size:.65rem;font-weight:600;border-radius:4px;background:var(--bg3);color:var(--text3)}
+.step.active{background:var(--blue);color:#fff}
+.step.done{background:rgba(16,185,129,.2);color:var(--green)}
+
+/* PREVIEW TABLE */
+.preview-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.preview-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.preview-scroll{overflow:auto;max-height:350px}
+.preview-table{width:100%;border-collapse:collapse;font-size:.72rem;font-family:'JetBrains Mono',monospace}
+.preview-table th{background:var(--bg4);padding:6px 8px;text-align:left;position:sticky;top:0;z-index:3;color:var(--text3);font-size:.65rem;white-space:nowrap}
+.preview-table td{padding:4px 8px;border-bottom:1px solid rgba(51,65,85,.3);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+.preview-table tr:hover td{background:rgba(59,130,246,.05)}
+.preview-table tr.header-row td{background:rgba(6,182,212,.15);font-weight:700;color:var(--cyan)}
+.preview-table .row-num{color:var(--text3);font-size:.65rem;min-width:28px;text-align:right;padding-right:8px}
+
+/* MAPPING PANEL */
+.mapping-panel{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+.mapping-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.map-item{background:var(--bg3);border-radius:6px;padding:8px 10px}
+.map-item label{display:block;font-size:.65rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.map-item select{width:100%;background:var(--bg4);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:.78rem;font-family:'Inter',sans-serif}
+.map-item select:focus{outline:none;border-color:var(--cyan)}
+.map-item select option{background:var(--bg3)}
+.map-item.mapped select{border-color:var(--green);background:rgba(16,185,129,.08)}
+.map-item.unmapped select{border-color:var(--orange)}
+
+/* RESULT TABLE (editable) */
+.result-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.result-scroll{overflow:auto;flex:1}
+.result-table{width:100%;border-collapse:collapse;font-size:.75rem;min-width:auto}
+.result-table th{background:var(--bg4);padding:4px 6px;text-align:center;position:sticky;top:0;z-index:3;font-size:.62rem;text-transform:uppercase;letter-spacing:.3px;color:var(--text3);white-space:nowrap}
+.result-table th.cat-meta{background:#1e3a5f}
+.result-table th.cat-hrs{background:#1e4d3a}
+.result-table th.cat-obm{background:#3a2e1e}
+.result-table th.cat-ops{background:#3a1e3a}
+.result-table td{padding:3px 5px;border-bottom:1px solid rgba(51,65,85,.3);text-align:center;font-family:'JetBrains Mono',monospace;font-size:.7rem}
+.result-table td.editable{cursor:text}
+.result-table td.editable:focus{outline:2px solid var(--cyan);outline-offset:-1px;background:rgba(6,182,212,.1)}
+.result-table td.text-cell{text-align:left;font-family:'Inter',sans-serif;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-table tr:hover td{background:rgba(59,130,246,.04)}
+.result-table tr.invalid td{background:rgba(239,68,68,.06)}
+.result-table tfoot td{background:var(--bg3);font-weight:700}
+
+/* EXPORT BAR */
+.export-bar{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
+.stat{font-size:.82rem;display:flex;align-items:center;gap:4px}
+.stat strong{font-family:'JetBrains Mono',monospace;color:var(--cyan)}
+
+/* LOG */
+.log{background:var(--bg3);border-radius:8px;padding:10px;font-family:'JetBrains Mono',monospace;font-size:.68rem;max-height:150px;overflow-y:auto}
+.log-line{padding:1px 0;color:var(--text2)}.log-line.ok{color:var(--green)}.log-line.err{color:var(--red)}.log-line.info{color:var(--cyan)}
+
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
+
+/* ===== Simplified Step 2 & 3 styling ===== */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.card-title{font-size:.78rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card-title .badge{background:var(--cyan);color:#000;padding:1px 6px;border-radius:10px;font-size:.62rem;font-weight:800;text-transform:none;letter-spacing:0}
+.hint{font-size:.72rem;color:var(--text3);line-height:1.4}
+.hint.warn{color:var(--orange)}
+.hint.ok{color:var(--green)}
+
+/* Info pills — detected meta at a glance */
+.info-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.pill{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:6px 10px;display:flex;flex-direction:column;gap:2px;min-width:100px}
+.pill label{font-size:.6rem;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.pill input,.pill select{background:transparent;border:none;color:var(--text);font-size:.85rem;font-weight:600;font-family:'JetBrains Mono',monospace;padding:0;outline:none;width:100%}
+.pill input:focus,.pill select:focus{color:var(--cyan)}
+.pill.pill-rig{border-color:var(--cyan)}
+.pill.pill-rig input{color:var(--cyan)}
+
+/* Mapping groups */
+.map-group{margin-bottom:10px}
+.map-group-title{font-size:.7rem;font-weight:700;color:var(--text2);margin-bottom:6px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.map-group-title .chev{transition:transform .15s}
+.map-group.collapsed .chev{transform:rotate(-90deg)}
+.map-group.collapsed .mapping-grid{display:none}
+.map-group-title .count-mapped{margin-left:auto;font-size:.6rem;color:var(--text3);font-weight:400}
+.map-group-title .count-mapped.all{color:var(--green)}
+
+/* Step 2 hint banner */
+.step-hint{background:rgba(6,182,212,.08);border-left:3px solid var(--cyan);padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:.78rem;color:var(--text2);line-height:1.4}
+
+/* CTA button — bigger, clearer */
+.btn-cta{padding:10px 20px;font-size:.85rem;font-weight:700}
+
+/* Step 3 summary strip */
+.summary-strip{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:linear-gradient(90deg,rgba(59,130,246,.1),rgba(6,182,212,.05));border-radius:8px;margin-bottom:8px;border:1px solid var(--border)}
+.summary-strip .sum-item{display:flex;flex-direction:column;gap:1px}
+.summary-strip .sum-label{font-size:.58rem;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.summary-strip .sum-val{font-size:1rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--text)}
+.summary-strip .sum-val.ok{color:var(--green)}
+.summary-strip .sum-val.warn{color:var(--orange)}
+.summary-strip .sum-val.bad{color:var(--red)}
+
+/* Row status cell */
+.row-status{width:24px;text-align:center;font-weight:700;font-size:.75rem}
+.row-status.ok{color:var(--green)}
+.row-status.warn{color:var(--orange)}
+.row-status.bad{color:var(--red)}
+
+/* Column group header (second row of <thead>) */
+.grp-hdr th{padding:2px 4px !important;font-size:.55rem !important;background:var(--bg3) !important;border-bottom:2px solid var(--bg4) !important;text-transform:uppercase;letter-spacing:.4px}
+.grp-hdr th.grp-hrs{color:var(--green)}
+.grp-hdr th.grp-obm{color:var(--orange)}
+.grp-hdr th.grp-ops{color:var(--purple)}
+
+
+/* ===== Integrated Executive Summary ===== */
+.view-tabs{display:flex;gap:6px;align-items:center;margin-left:8px}.view-tab{padding:5px 11px;font-size:.72rem;font-weight:700;border:1px solid var(--border);border-radius:7px;background:var(--bg2);color:var(--text2);cursor:pointer;text-decoration:none;transition:all .2s}.view-tab:hover,.view-tab.active{border-color:var(--cyan);color:var(--cyan);background:rgba(6,182,212,.08)}#summaryView{display:none;padding:14px 16px 28px;max-width:1600px;margin:0 auto}.summary-section{margin-bottom:16px}.summary-title{font-size:1.25rem;font-weight:800;margin-bottom:3px;color:var(--text);display:flex;align-items:center;gap:8px}.summary-sub{font-size:.78rem;color:var(--text3);margin-bottom:12px}.summary-grid{display:grid;gap:10px}.summary-g2{grid-template-columns:repeat(2,minmax(0,1fr))}.summary-g3{grid-template-columns:repeat(3,minmax(0,1fr))}.summary-g4{grid-template-columns:repeat(4,minmax(0,1fr))}.summary-g6{grid-template-columns:repeat(6,minmax(0,1fr))}.summary-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}.summary-card-title{font-size:.66rem;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}.summary-kpi{text-align:center}.summary-kpi .val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:800;line-height:1}.summary-kpi .label{font-size:.62rem;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-top:5px}.summary-kpi .note{font-size:.65rem;color:var(--text2);margin-top:3px}.summary-chart{position:relative;height:260px}.summary-table-wrap{overflow:auto;max-height:520px}.summary-table{width:100%;border-collapse:collapse;font-size:.74rem}.summary-table th{position:sticky;top:0;background:var(--bg4);color:var(--text3);padding:7px 8px;text-align:left;text-transform:uppercase;font-size:.6rem;letter-spacing:.4px;z-index:1}.summary-table td{padding:6px 8px;border-bottom:1px solid rgba(51,65,85,.4)}.summary-table .num{text-align:right;font-family:'JetBrains Mono',monospace}.summary-table tr:hover td{background:rgba(59,130,246,.05)}.qc-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:5px;font-size:.62rem;font-weight:800}.qc-ok{background:rgba(16,185,129,.15);color:var(--green)}.qc-warn{background:rgba(245,158,11,.15);color:var(--orange)}.qc-bad{background:rgba(239,68,68,.15);color:var(--red)}.summary-heatmap{display:grid;grid-template-columns:70px repeat(var(--days,31), minmax(18px,1fr));gap:2px;min-width:820px}.summary-heat-label{font-size:.64rem;color:var(--text3);display:flex;align-items:center;justify-content:flex-end;padding-right:5px}.summary-day-head{font-size:.55rem;color:var(--text3);text-align:center}.summary-heat-cell{height:18px;border-radius:3px;font-size:.5rem;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace}.summary-heat-cell.full{background:var(--green);color:#001b10}.summary-heat-cell.partial{background:var(--orange);color:#1d1200}.summary-heat-cell.missing{background:rgba(239,68,68,.55);color:#fff}.summary-heat-cell.empty{background:rgba(100,116,139,.25);color:var(--text3)}.summary-empty{border:1px dashed var(--border);border-radius:12px;padding:28px;text-align:center;color:var(--text3);background:rgba(17,24,39,.55)}@media(max-width:1100px){.summary-g4,.summary-g6{grid-template-columns:repeat(2,1fr)}.summary-g3{grid-template-columns:1fr}.summary-g2{grid-template-columns:1fr}}@media(max-width:700px){.view-tabs{order:3;width:100%;margin:6px 0}.nav{height:auto;min-height:40px;flex-wrap:wrap}.summary-g4,.summary-g6{grid-template-columns:1fr}}
+
+
+.qc-health-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}.qc-health-card{background:linear-gradient(135deg,rgba(17,24,39,.98),rgba(30,41,59,.72));border:1px solid var(--border);border-radius:10px;padding:12px}.qc-health-card .big{font-family:'JetBrains Mono',monospace;font-size:1.45rem;font-weight:900;line-height:1}.qc-health-card .small{font-size:.65rem;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-top:4px}.qc-health-card .sub{font-size:.68rem;color:var(--text2);margin-top:3px}.toolbar-sep{width:1px;height:22px;background:var(--border);display:inline-block}.conf-row{background:rgba(245,158,11,.06)}.bad-row{background:rgba(239,68,68,.06)}.ok-row{background:rgba(16,185,129,.04)}@media(max-width:900px){.qc-health-row{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.qc-health-row{grid-template-columns:1fr}}
+
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-brand">ABRAJ ENERGY</div>
+  <div class="nav-sub">Billing Extractor &mdash; Preview, Map & Edit</div>
+  <div class="nav-right">
+    <select id="monthSelect" class="btn btn-sm" style="background:var(--bg3);color:var(--text);min-width:60px" onchange="onMonthYearChange()">
+      <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option>
+      <option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option>
+      <option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+    </select>
+    <input id="yearInput" type="number" class="btn btn-sm" style="background:var(--bg3);color:var(--text);width:70px;text-align:center" value="2026" min="2020" max="2035" onchange="onMonthYearChange()">
+    <div class="view-tabs"><button id="tabExtraction" class="view-tab active" onclick="showAppView('extraction')">Upload / Extraction</button><button id="tabSummary" class="view-tab" onclick="showAppView('summary')">Executive Summary</button></div>
+    <button class="btn btn-sm" onclick="document.getElementById('logBox').style.display=document.getElementById('logBox').style.display==='none'?'block':'none'">Log</button>
+    <button class="btn btn-sm" onclick="exportExceptionReport()">QC Exceptions</button>
+    <button class="btn btn-sm" onclick="exportJSON()">Export JSON</button>
+    <button class="btn btn-sm" onclick="document.getElementById('jsonImportInput').click()">Import JSON</button>
+    <input id="jsonImportInput" type="file" accept=".json,application/json" style="display:none" onchange="importJSONFile(this.files[0]);this.value=''">
+    <button class="btn btn-green btn-sm" onclick="exportAll()">Download Excel</button>
+  </div>
+</nav>
+
+<div id="extractionView">
+<div class="container">
+<div class="layout">
+
+<!-- LEFT: RIG LIST -->
+<div class="rig-list" id="rigList"></div>
+
+<!-- RIGHT: MAIN PANEL -->
+<div class="main-panel" id="mainPanel">
+
+  <!-- Step indicator -->
+  <div class="steps" id="steps">
+    <div class="step active" id="step1">1. Drop File</div>
+    <div class="step" id="step2">2. Preview & Map</div>
+    <div class="step" id="step3">3. Review & Edit</div>
+  </div>
+
+  <!-- FLEET OVERVIEW (shows when data loaded) -->
+  <div id="fleetOverview" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:4px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <strong style="font-size:.7rem;white-space:nowrap">Fleet</strong>
+      <div id="fleetGrid" style="display:flex;gap:2px;flex:1"></div>
+      <span id="fleetSummary" style="font-size:.6rem;color:var(--text3);white-space:nowrap"></span>
+    </div>
+    <div id="fleetMissing" style="display:none"></div>
+  </div>
+
+  <!-- STEP 1: DROP -->
+  <div id="panelDrop">
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div style="font-size:2rem;margin-bottom:6px">&#128203;</div>
+      <div style="font-size:.9rem;color:var(--text2)">Drop billing file here or click to browse</div>
+      <div style="font-size:.75rem;color:var(--text3);margin-top:4px">.xlsx, .xls, .pdf &mdash; Rig auto-detected from filename</div>
+      <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.pdf">
+    </div>
+  </div>
+
+  <!-- STEP 2: PREVIEW + MAPPING (simplified) -->
+  <div id="panelPreview" style="display:none">
+
+    <!-- 2.1  What we detected: meta pills -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">1</span>
+        File info
+        <span id="previewFileName" style="margin-left:auto;color:var(--text2);font-weight:500;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="info-pills">
+        <div class="pill pill-rig"><label>Rig #</label><input id="metaRig" placeholder="—"></div>
+        <div class="pill"><label>Customer</label>
+          <select id="metaCust">
+            <option>PDO</option><option>OXY</option><option>OQ</option><option>ARA</option><option>Medco</option><option>BP</option>
+          </select>
+        </div>
+        <div class="pill" style="flex:1;min-width:160px"><label>Well</label><input id="metaWell" placeholder="—"></div>
+        <div class="pill"><label>Contract</label><input id="metaContract" placeholder="—"></div>
+        <div class="pill"><label>P.O</label><input id="metaPO" placeholder="—"></div>
+        <div class="pill"><label>Sheet</label>
+          <select id="sheetSelect" onchange="switchSheet()"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2.2  Preview: click-to-set-header -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">2</span>
+        Preview
+        <span id="previewSheetInfo" style="margin-left:auto;color:var(--text3);font-weight:500;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="step-hint" id="headerRowHint">
+        Click the row that contains the column names (Date, Operating, Total…).
+        We auto-detected row <b id="detectedHeaderRowNum">—</b> — click any other row to change it.
+      </div>
+      <div class="preview-scroll" id="previewScroll" style="max-height:280px"></div>
+    </div>
+
+    <!-- 2.3  Column mapping — essentials shown, details collapsible -->
+    <div class="card">
+      <div class="card-title">
+        <span class="badge">3</span>
+        Column mapping
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0" id="mapStatus"></span>
+      </div>
+
+      <div class="map-group" id="grpEssentials">
+        <div class="map-group-title" onclick="toggleGroup('grpEssentials')">
+          <span class="chev">&#9662;</span> Essentials (required)
+          <span class="count-mapped" id="cntEssentials"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridEssentials"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpHours">
+        <div class="map-group-title" onclick="toggleGroup('grpHours')">
+          <span class="chev">&#9662;</span> Other hours
+          <span class="count-mapped" id="cntHours"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridHours"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpObm">
+        <div class="map-group-title" onclick="toggleGroup('grpObm')">
+          <span class="chev">&#9662;</span> OBM (if present)
+          <span class="count-mapped" id="cntObm"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridObm"></div>
+      </div>
+
+      <div class="map-group collapsed" id="grpText">
+        <div class="map-group-title" onclick="toggleGroup('grpText')">
+          <span class="chev">&#9662;</span> Operation / Remarks
+          <span class="count-mapped" id="cntText"></span>
+        </div>
+        <div class="mapping-grid" id="mapGridText"></div>
+      </div>
+
+      <input id="metaHeaderRow" type="hidden">
+    </div>
+
+    <!-- 2.4  Action bar -->
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0">
+      <button class="btn btn-red btn-sm" onclick="cancelPreview()">Cancel</button>
+      <button class="btn btn-sm" onclick="autoMap()">Re-detect</button>
+      <button class="btn btn-sm" onclick="skipFile()" id="skipBtn" style="display:none">Skip this file</button>
+      <button class="btn btn-green btn-sm" id="extractAllBtn" style="display:none;margin-left:auto" onclick="extractAllSheets()">Extract all sheets at once</button>
+      <button class="btn btn-primary btn-cta" id="btnExtract" style="margin-left:auto" onclick="applyMapping()">Extract data &rarr;</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: RESULT (simplified) -->
+  <div id="panelResult" style="display:none">
+
+    <!-- 3.1 Summary strip (single line: rig · customer · well · days · completeness) -->
+    <div id="resultSummary" class="summary-strip"></div>
+
+    <!-- 3.2 Timeline (compact) -->
+    <div class="card" id="resultTimelineCard">
+      <div class="card-title">
+        <span class="badge">&#128197;</span>
+        <span id="resultTimelineTitle">Month timeline</span>
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0">
+          <span style="color:var(--green)">&#9632;</span> Full day &nbsp;
+          <span style="color:var(--orange)">&#9632;</span> Partial &nbsp;
+          <span style="color:var(--red)">&#9632;</span> Missing
+        </span>
+      </div>
+      <div id="resultTimeline"></div>
+    </div>
+
+    <!-- 3.3 Data table -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="card-title" style="padding:10px 14px 6px;margin-bottom:0;border-bottom:1px solid var(--border)">
+        <span class="badge">&#128203;</span>
+        Daily rows
+        <span class="hint" style="margin-left:auto;text-transform:none;letter-spacing:0">Click any cell to edit. Total recalculates automatically.</span>
+      </div>
+      <div class="result-scroll" id="resultScroll" style="max-height:calc(100vh - 440px)"></div>
+    </div>
+
+    <!-- 3.4 Warnings -->
+    <div id="resultWarnings"></div>
+
+    <!-- 3.5 Action bar -->
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 0;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="goBackToPreview()">&larr; Back to mapping</button>
+      <span id="resultTitle" style="color:var(--text3);font-size:.8rem;margin-left:6px"></span>
+      <button class="btn btn-green btn-sm" id="acceptAllBtn" style="display:none;margin-left:auto" onclick="acceptAllRemaining()">Accept all remaining</button>
+      <button class="btn btn-primary btn-cta" style="margin-left:auto" onclick="acceptData()">Save &amp; continue &rarr;</button>
+    </div>
+  </div>
+
+  <!-- LOG -->
+  <div id="logBox" style="display:none;margin-top:8px"><div class="log" id="logEl"></div></div>
+
+  <!-- EXPORT BAR -->
+  <div class="export-bar" style="margin-top:auto">
+    <div style="display:flex;gap:16px">
+      <div class="stat">Rigs: <strong id="sRigs">0</strong></div>
+      <div class="stat">Rows: <strong id="sRows">0</strong></div>
+      <div class="stat">Oper: <strong id="sOper">0</strong> hrs</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" onclick="manualSaveSession()">Save Session</button>
+      <button class="btn btn-sm" onclick="manualLoadSession()">Load Session</button>
+      <button class="btn btn-sm" onclick="exportExceptionReport()">QC Report</button>
+      <button class="btn btn-sm" onclick="exportJSON()">JSON</button>
+      <button class="btn btn-sm" onclick="clearAll()">Clear All</button>
+      <button class="btn btn-green btn-sm" onclick="exportAll()">Download Excel</button>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- INTEGRATED EXECUTIVE SUMMARY VIEW -->
+<div id="summaryView">
+  <div class="summary-section">
+    <div class="summary-title">Executive Summary</div>
+    <div class="summary-sub" id="summarySubtitle">Upload billing files to generate a live executive summary.</div>
+    <div id="summaryEmpty" class="summary-empty">No extracted records yet. Upload PDF or Excel billing files in the Upload / Extraction tab.</div>
+    <div id="summaryContent" style="display:none">
+      <div class="summary-grid summary-g6" style="margin-bottom:12px">
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--cyan)" id="kpiActiveRigs">0</div><div class="label">Active Rigs</div><div class="note" id="kpiCustomers">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--green)" id="kpiSubmittedDays">0</div><div class="label">Submitted Days</div><div class="note" id="kpiExpectedDays">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--blue)" id="kpiOperating">0</div><div class="label">Operating Hrs</div><div class="note" id="kpiUtil">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--orange)" id="kpiReduced">0</div><div class="label">Reduced Hrs</div><div class="note" id="kpiReducedPct">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--red)" id="kpiMissingHrs">0</div><div class="label">QC Missing Hrs</div><div class="note" id="kpiMissingDays">—</div></div>
+        <div class="summary-card summary-kpi"><div class="val" style="color:var(--purple)" id="kpiTotalBilled">0</div><div class="label">Total Billed Hrs</div><div class="note">All categories</div></div>
+      </div>
+      <div class="qc-health-row" id="qcHealthRow">
+        <div class="qc-health-card"><div class="big" style="color:var(--green)" id="kpiQCCompletion">0%</div><div class="small">Fleet Submission Completion</div><div class="sub" id="kpiQCCompletionNote">Full-month rule</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--cyan)" id="kpiFullRigs">0/0</div><div class="small">Complete Rigs</div><div class="sub">24h × every calendar day</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--orange)" id="kpiReviewRigs">0</div><div class="small">Rigs Needing Review</div><div class="sub" id="kpiReviewRigsNote">Missing / partial / over 24h</div></div>
+        <div class="qc-health-card"><div class="big" style="color:var(--red)" id="kpiCriticalExceptions">0</div><div class="small">Critical Exceptions</div><div class="sub">Missing full days + over 24h</div></div>
+      </div>
+      <div class="summary-grid summary-g3 summary-section">
+        <div class="summary-card"><div class="summary-card-title">Hours Distribution</div><div class="summary-chart"><canvas id="summaryHoursPie"></canvas></div></div>
+        <div class="summary-card"><div class="summary-card-title">Operating Hours by Customer</div><div class="summary-chart"><canvas id="summaryCustomerBar"></canvas></div></div>
+        <div class="summary-card"><div class="summary-card-title">Daily Submitted vs Expected Hours</div><div class="summary-chart"><canvas id="summaryDailyLine"></canvas></div></div>
+      </div>
+      <div class="summary-grid summary-g2 summary-section">
+        <div class="summary-card"><div class="summary-card-title">Rig QC Status</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Days</th><th class="num">Total Hrs</th><th class="num">Missing Hrs</th><th>Status</th></tr></thead><tbody id="summaryRigTable"></tbody></table></div></div>
+        <div class="summary-card"><div class="summary-card-title">Customer Summary</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Customer</th><th class="num">Rigs</th><th class="num">Operating</th><th class="num">Total</th><th class="num">Missing Hrs</th></tr></thead><tbody id="summaryCustomerTable"></tbody></table></div></div>
+      </div>
+      <div class="summary-section summary-card"><div class="summary-card-title">Submission QC Timeline — Full Month by Rig</div><div style="overflow:auto"><div class="summary-heatmap" id="summaryHeatmap"></div></div><div style="font-size:.68rem;color:var(--text3);margin-top:8px"><span style="color:var(--green)">■</span> 24h complete &nbsp; <span style="color:var(--orange)">■</span> partial day &nbsp; <span style="color:var(--red)">■</span> missing day &nbsp; <span style="color:var(--text3)">■</span> no file = missing</div></div>
+      <div class="summary-section summary-card"><div class="summary-card-title">QC Exception Report <button class="btn btn-sm" style="float:right;margin-top:-4px" onclick="exportExceptionReport()">Export QC Excel</button></div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Date</th><th class="num">Submitted</th><th class="num">Missing</th><th>Issue</th><th>Action Required</th></tr></thead><tbody id="summaryExceptionTable"></tbody></table></div></div>
+      <div class="summary-section summary-card"><div class="summary-card-title">Extracted Records</div><div class="summary-table-wrap"><table class="summary-table"><thead><tr><th>Rig</th><th>Customer</th><th>Well</th><th>Date</th><th class="num">Operating</th><th class="num">Reduced</th><th class="num">Breakdown</th><th class="num">Rig Move</th><th class="num">Total</th><th>QC</th></tr></thead><tbody id="summaryRecordsTable"></tbody></table></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================
+// PDF.js worker
+// ============================================
+// Disable worker so PDF.js runs in main thread (works on file:// and localhost)
+if(typeof pdfjsLib!=='undefined') pdfjsLib.GlobalWorkerOptions.workerSrc='';
+if(typeof pdfjsLib!=='undefined') pdfjsLib.disableWorker=true;
+
+// ============================================
+// GLOBALS
+// ============================================
+const RIGS=[104,105,106,107,108,109,110,111,112,201,202,203,204,205,206,207,208,209,210,211,302,303,304,305];
+const RIG_CUST={104:'PDO',105:'Medco',106:'PDO',107:'PDO',108:'PDO',109:'PDO',110:'OQ',111:'OQ',112:'OQ',201:'PDO',202:'PDO',203:'PDO',204:'ARA',205:'OQ',206:'OXY',207:'OXY',208:'OXY',209:'OXY',210:'PDO',211:'PDO',302:'PDO',303:'PDO',304:'PDO',305:'BP'};
+const CUST_COLORS={PDO:'#3b82f6',OXY:'#f59e0b',OQ:'#10b981',ARA:'#8b5cf6',Medco:'#06b6d4',BP:'#ec4899'};
+
+// Target columns for mapping
+const TARGET_COLS = [
+  {key:'date',label:'Date',type:'date'},
+  {key:'operating',label:'Operating',type:'num'},
+  {key:'reduced',label:'Reduced',type:'num'},
+  {key:'breakdown',label:'Breakdown',type:'num'},
+  {key:'special',label:'Special',type:'num'},
+  {key:'force_maj',label:'Force Maj',type:'num'},
+  {key:'zero_rate',label:'Zero Rate',type:'num'},
+  {key:'standby',label:'Standby',type:'num'},
+  {key:'repair',label:'Repair',type:'num'},
+  {key:'rig_move',label:'Rig Move',type:'num'},
+  // total_hrs is auto-calculated (sum of all hour cols), not mapped
+  {key:'obm_oper',label:'OBM Oper',type:'num'},
+  {key:'obm_red',label:'OBM Red',type:'num'},
+  {key:'obm_bd',label:'OBM BD',type:'num'},
+  {key:'obm_spe',label:'OBM Spe',type:'num'},
+  {key:'obm_zero',label:'OBM Zero',type:'num'},
+  {key:'operation',label:'Operation',type:'text'},
+  {key:'total_hrs_repair',label:'Hrs Repair',type:'num'},
+  {key:'remarks',label:'Remarks',type:'text'},
+];
+
+// Store
+const rigStore = {};
+
+// Current preview state
+let currentRawData = null;    // array of arrays (all rows)
+let currentRawSheets = null;  // {sheetName: data}
+let currentSheetName = null;
+let currentHeaderRow = -1;    // 0-indexed
+let currentMapping = {};      // {targetKey: sourceColIndex}
+let currentFileName = '';
+let currentRigNum = null;
+let currentExtractedRows = null;
+
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Dynamic billing period (default: current month)
+let billingMonth=new Date().getMonth()+1; // 1-12
+let billingYear=new Date().getFullYear();
+function getBillingMonthName(){return MONTHS[billingMonth-1];}
+function getDaysInMonth(){return new Date(billingYear,billingMonth,0).getDate();}
+function updateMonthYearUI(){
+  const sel=document.getElementById('monthSelect');
+  const yr=document.getElementById('yearInput');
+  if(sel)sel.value=billingMonth;
+  if(yr)yr.value=billingYear;
+}
+function onMonthYearChange(){
+  billingMonth=parseInt(document.getElementById('monthSelect').value);
+  billingYear=parseInt(document.getElementById('yearInput').value)||2026;
+  log(`Billing period changed to ${getBillingMonthName()} ${billingYear}`,'info');
+}
+
+// ============================================
+// UTILITIES
+// ============================================
+function log(msg,cls=''){const el=document.getElementById('logEl');el.innerHTML+=`<div class="log-line ${cls}">${msg}</div>`;el.scrollTop=el.scrollHeight;}
+function safeNum(v){if(v==null||v==='')return 0;const n=Number(v);return isNaN(n)?0:n;}
+function safeStr(v){return v==null?'':String(v).trim();}
+
+function toDateStr(val,year,month){
+  if(!year)year=billingYear;
+  if(!month)month=billingMonth;
+  if(!val)return null;
+  if(val instanceof Date&&!isNaN(val))return`${String(val.getUTCDate()).padStart(2,'0')}-${MONTHS[val.getUTCMonth()]}-${val.getUTCFullYear()}`;
+  if(typeof val==='number'||(typeof val==='string'&&/^\d+(\.\d+)?$/.test(val.trim()))){
+    const n=Number(val);
+    if(n>=1&&n<=31)try{return`${String(Math.floor(n)).padStart(2,'0')}-${MONTHS[month-1]}-${year}`}catch(e){}
+    if(n>40000){const d=new Date((n-25569)*86400000);if(!isNaN(d))return`${String(d.getUTCDate()).padStart(2,'0')}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`}
+    return null;
+  }
+  if(typeof val==='string'){
+    // Remove extra spaces (PDFs produce "04- 03- 2026")
+    val=val.replace(/\s+/g,'').trim();
+    let m=val.match(/^(\d{1,2})[\-\/]([A-Za-z]{3})[\-\/](\d{2,4})$/);
+    if(m){const mi=MONTHS.findIndex(x=>x.toLowerCase()===m[2].toLowerCase());if(mi>=0){const yr=m[3].length===2?2000+parseInt(m[3]):parseInt(m[3]);return`${m[1].padStart(2,'0')}-${MONTHS[mi]}-${yr}`;}}
+    m=val.match(/^(\d{1,2})[\-\/\.](\d{1,2})[\-\/\.](\d{4})$/);
+    if(m){const day=parseInt(m[1]),mon=parseInt(m[2]),yr=parseInt(m[3]);if(mon>=1&&mon<=12&&day>=1&&day<=31)return`${String(day).padStart(2,'0')}-${MONTHS[mon-1]}-${yr}`;}
+    m=val.match(/^(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/);
+    if(m){const yr=parseInt(m[1]),mon=parseInt(m[2]),day=parseInt(m[3]);if(mon>=1&&mon<=12)return`${String(day).padStart(2,'0')}-${MONTHS[mon-1]}-${yr}`;}
+  }
+  return null;
+}
+
+// ============================================
+// AUTO COLUMN MAPPING
+// ============================================
+function autoMapHeaders(headerCells){
+  // headerCells: array of strings (one per column)
+  const map = {};
+  for(let i=0;i<headerCells.length;i++){
+    const raw = safeStr(headerCells[i]);
+    if(!raw) continue;
+    const t = raw.toLowerCase().replace(/[^a-z0-9\s]/g,' ').trim();
+    const tNoSpace = t.replace(/\s+/g,''); // "operatin g" → "operating"
+
+    // Date
+    if(/^date$/.test(t)){map.date=i;continue;}
+
+    // Operating: "oper", "operating", "operatin g" (PDF spaces), "0peration.hrs" (typo)
+    // NOT "operation" (description), NOT "obm"
+    if((/^oper$/.test(t)||/^operating/.test(t)||/^operating/.test(tNoSpace)||/0peration/.test(tNoSpace)||/operation\s*hrs/i.test(raw))&&!/operations?\s*(summary|$)/i.test(raw)&&!/obm/i.test(raw)){map.operating=i;continue;}
+
+    // Check remarks BEFORE reduced — "Remarks on Reduce Rate" should match remarks, not reduced
+    if(/remark|comment/i.test(t)&&!map.remarks){map.remarks=i;continue;}
+
+    if(/(reduc|performance)/i.test(tNoSpace)&&!/obm/.test(tNoSpace)&&!map.reduced){map.reduced=i;continue;}
+    if(/breakdown/i.test(tNoSpace)&&!/obm/.test(tNoSpace)&&!map.breakdown){map.breakdown=i;continue;}
+    if(/(special|upgrade)/i.test(tNoSpace)&&!/obm/.test(tNoSpace)&&!map.special){map.special=i;continue;}
+    if(/(forcemaj|forcemajor|sbmrate)/i.test(tNoSpace)&&!map.force_maj){map.force_maj=i;continue;}
+    if(/zero/i.test(tNoSpace)&&!/obm/.test(tNoSpace)&&!map.zero_rate){map.zero_rate=i;continue;}
+    if(/(standby|standby|stacking)/i.test(tNoSpace)&&!map.standby){map.standby=i;continue;}
+    if(/repairrate/i.test(tNoSpace)&&!map.repair){map.repair=i;continue;}
+    if(/(rigmove|movestat|^move)/i.test(tNoSpace)||/(rig\s*move|move\s*stat|rig\s*moves)/i.test(t)){map.rig_move=i;continue;}
+
+    // Total hrs - match "total hrs", "total hr", "total hours", "total", or just "hours"
+    if(/(totalh|totalhrs|^total$)/i.test(tNoSpace)&&!/repair/.test(tNoSpace)&&!map.total_hrs){map.total_hrs=i;continue;}
+    if(/^hours$/i.test(tNoSpace)&&!map.total_hrs){map.total_hrs=i;continue;}
+
+    // OBM
+    if(/obm/i.test(t)&&/(oper|rate)/i.test(t)&&!/red|bd|spe|zero/.test(t)){map.obm_oper=i;continue;}
+    if(/obm/i.test(t)&&/red/.test(t)){map.obm_red=i;continue;}
+    if(/obm/i.test(t)&&/(bd|break)/.test(t)){map.obm_bd=i;continue;}
+    if(/obm/i.test(t)&&/spe/.test(t)){map.obm_spe=i;continue;}
+    if(/obm/i.test(t)&&/zero/.test(t)){map.obm_zero=i;continue;}
+
+    // Operation / description
+    if(/(operations?\s*summary|^operations?$|^description$)/i.test(raw)){map.operation=i;continue;}
+
+    // Repair hours (separate from "repair rate")
+    if(/(total\s*hours?\s*repair|daily\s*repair|hours?\s*repair)/i.test(t)){map.total_hrs_repair=i;continue;}
+
+    // Remarks
+    // remarks already checked above
+  }
+  return map;
+}
+
+// Second pass: find unnamed columns with text content (for Operation/Description)
+function detectUnnamedTextColumns(map, rawData, headerRow){
+  if(map.operation!==undefined)return; // already mapped
+  if(headerRow<0||!rawData||rawData.length<=headerRow+1)return;
+
+  // Scan first few data rows for columns with long text that aren't already mapped
+  const mappedCols=new Set(Object.values(map));
+  const candidates={}; // col index → {textCount, totalLen}
+
+  for(let r=headerRow+1;r<Math.min(rawData.length,headerRow+10);r++){
+    const row=rawData[r];if(!row)continue;
+    for(let c=0;c<Math.min(row.length,30);c++){
+      if(mappedCols.has(c))continue;
+      const v=safeStr(row[c]);
+      if(v.length>15){ // long text = likely operation description
+        if(!candidates[c])candidates[c]={textCount:0,totalLen:0};
+        candidates[c].textCount++;
+        candidates[c].totalLen+=v.length;
+      }
+    }
+  }
+
+  // Pick the column with the most long-text occurrences
+  let bestCol=-1,bestScore=0;
+  for(const [col,stats] of Object.entries(candidates)){
+    if(stats.textCount>bestScore||(stats.textCount===bestScore&&stats.totalLen>candidates[bestCol]?.totalLen)){
+      bestScore=stats.textCount;
+      bestCol=parseInt(col);
+    }
+  }
+
+  if(bestCol>=0){
+    map.operation=bestCol;
+    log(`  Auto-detected unnamed Operation column at index ${bestCol} (${bestScore} rows with long text)`,'info');
+  }
+}
+
+function detectMeta(rawData, headerRow) {
+  let rig='', cust='', well='', contract='', po='';
+  for(let r=0;r<headerRow&&r<rawData.length;r++){
+    const row=rawData[r];if(!row)continue;
+    const rowText = row.map(c=>safeStr(c)).join(' ').toLowerCase();
+    // Customer
+    if(!cust){
+      if(/\bpdo\b/.test(rowText))cust='PDO';
+      else if(/\boxy\b/.test(rowText))cust='OXY';
+      else if(/\boq\b/.test(rowText))cust='OQ';
+      else if(/\bara\b/.test(rowText))cust='ARA';
+      else if(/\bmedco\b/.test(rowText))cust='Medco';
+      else if(/\bbp\b/.test(rowText))cust='BP';
+    }
+    for(let c=0;c<row.length;c++){
+      const v=safeStr(row[c]).toLowerCase();
+      if(/well|wbs/.test(v)&&!well){for(let cc=c+1;cc<Math.min(c+5,row.length);cc++){const wv=safeStr(row[cc]);if(wv&&!/contract|p\.o|po:/i.test(wv)){well=wv;break;}}}
+      if(/contract/.test(v)&&!contract){for(let cc=c+1;cc<Math.min(c+3,row.length);cc++){if(row[cc]){contract=safeStr(row[cc]);break;}}}
+      if(/p\.o|^po:/i.test(v)&&!po){for(let cc=c+1;cc<Math.min(c+3,row.length);cc++){if(row[cc]){po=safeStr(row[cc]);break;}}}
+    }
+  }
+  return{rig,cust,well,contract,po};
+}
+
+function findHeaderRow(rawData){
+  // Score each row: the hours table header has "Date" + multiple billing keywords
+  let bestRow=-1, bestScore=0;
+  for(let r=0;r<Math.min(rawData.length,25);r++){
+    const row=rawData[r];if(!row)continue;
+    const texts=row.map(v=>safeStr(v).toLowerCase().replace(/\n/g,' '));
+    const rowText=texts.join('|');
+    // Accept "date", "date (dd/mm)", "date (dd-mm-yyyy)", etc.
+    const hasDate=texts.some(t=>/^date\b/.test(t.trim()));
+    if(!hasDate)continue;
+    let score=3; // base score for having "Date"
+    if(/oper/.test(rowText))score+=2;
+    if(/reduc|stand|performance/.test(rowText))score+=2;
+    if(/breakdown/.test(rowText))score+=2;
+    if(/total.*h|total.*hrs|^hours$/.test(rowText))score+=2;
+    if(/zero|force|special|rig.*move/.test(rowText))score+=1;
+    if(/remark|operation|description/.test(rowText))score+=1;
+    if(/repair|sbm|upgrade/.test(rowText))score+=1;
+    // Count non-empty cells — real headers have many columns
+    const nonEmpty=texts.filter(t=>t.length>0).length;
+    if(nonEmpty>=4)score+=2;
+    if(score>bestScore){bestScore=score;bestRow=r;}
+  }
+  return bestRow;
+}
+
+function isFooterRow(row,dateCol){
+  if(!row)return false;
+  const v=safeStr(row[dateCol]||row[0]).toLowerCase().trim();
+  // Word-boundary match so operation text like "Rate changed..." in col 0 doesn't false-fire.
+  // Keywords must be the start of a summary label (followed by space/colon/end).
+  return /^(hrs|hours|days|daily|total|net\s*total|subtotal|sub\s*total|amount|unit\s*rate|abraj|dsv|client|signature|non[- ]?hour)(\b|[: ]|$)/.test(v);
+}
+
+function classifyRows(data,headerRow){
+  // Returns {headerEnd, dataStart, dataEnd, footerStart}
+  // Everything 0..headerRow-1 = BILLING HEADER
+  // headerRow = HOURS TABLE HEADER
+  // headerRow+1..dataEnd = HOURS TABLE DATA
+  // dataEnd+1.. = FOOTER
+  const dateCol=headerRow>=0&&data[headerRow]?data[headerRow].findIndex(v=>/^date$/i.test(safeStr(v).trim())):0;
+  let dataEnd=data.length-1;
+  if(headerRow>=0){
+    for(let r=headerRow+1;r<data.length;r++){
+      const row=data[r];if(!row)continue;
+      if(isFooterRow(row,dateCol>=0?dateCol:0)){dataEnd=r-1;break;}
+    }
+  }
+  return{billingHeader:0,tableHeader:headerRow,dataStart:headerRow+1,dataEnd,footerStart:dataEnd+1,dateCol:dateCol>=0?dateCol:0};
+}
+
+// ============================================
+// FILE HANDLING
+// ============================================
+// File queue for multi-file uploads
+let fileQueue = [];
+
+async function handleFiles(files){
+  // Add all files to queue
+  for(const file of files){
+    fileQueue.push(file);
+  }
+  log(`${files.length} file(s) queued. Total in queue: ${fileQueue.length}`,'info');
+  // Process first in queue
+  await processNextFile();
+}
+
+async function processNextFile(){
+  if(fileQueue.length===0){
+    log('All files processed.','ok');
+    return;
+  }
+  const file = fileQueue.shift();
+  currentFileName = file.name;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const buf = await file.arrayBuffer();
+
+  // Detect rig from filename
+  const rigMatch = file.name.match(/^(\d{3})/);
+  currentRigNum = rigMatch ? parseInt(rigMatch[1]) : null;
+
+  log(`Processing: ${file.name} (${fileQueue.length} remaining in queue)`,'info');
+
+  if(ext==='xlsx'||ext==='xls'){
+    parseExcel(buf);
+  } else if(ext==='pdf'){
+    await parsePDF(buf);
+  } else {
+    log(`Unsupported: ${file.name}`,'err');
+    await processNextFile(); // skip to next
+  }
+}
+
+// Show queue status in UI
+function getQueueStatus(){
+  const parts=[];
+  if(pendingSheets.length>0)parts.push(`${pendingSheets.length} more sheet${pendingSheets.length>1?'s':''}`);
+  if(fileQueue.length>0)parts.push(`${fileQueue.length} more file${fileQueue.length>1?'s':''}`);
+  return parts.length>0?` (${parts.join(' + ')})`:''
+}
+
+// Track pending sheets within current file
+let pendingSheets = [];
+
+function parseExcel(buf){
+  log(`Loading: ${currentFileName}`,'info');
+  const wb=XLSX.read(buf,{type:'array',cellDates:true,raw:false});
+  const wbRaw=XLSX.read(buf,{type:'array',cellDates:false,raw:true});
+
+  currentRawSheets={};
+  const sheetSel=document.getElementById('sheetSelect');
+  sheetSel.innerHTML='';
+
+  // Identify billing sheets (skip diesel, discount, ticket, fuel, etc.)
+  const billingSheets=[];
+  for(const sn of wb.SheetNames){
+    if(/diesel|discount|ticket|fuel|4%/i.test(sn))continue;
+    const formatted=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:null,raw:false});
+    const raw=XLSX.utils.sheet_to_json(wbRaw.Sheets[sn],{header:1,defval:null,raw:true});
+    // Check if this sheet has a billing table (has a header row with "Date")
+    const hr=findHeaderRow(formatted.length?formatted:raw);
+    if(hr>=0||formatted.length>5){
+      currentRawSheets[sn]={formatted,raw};
+      billingSheets.push(sn);
+      const opt=document.createElement('option');
+      opt.value=sn;opt.textContent=sn;
+      sheetSel.appendChild(opt);
+    }else{
+      log(`  Skipping sheet "${sn}" (no billing table found)`,'info');
+    }
+  }
+
+  if(billingSheets.length===0){
+    log(`No billing sheets found in ${currentFileName}`,'err');
+    return;
+  }
+
+  log(`Found ${billingSheets.length} billing sheet(s): ${billingSheets.join(', ')}`,'info');
+
+  // Queue remaining sheets (after the first) as pending
+  pendingSheets=billingSheets.slice(1);
+
+  // Show first billing sheet
+  currentSheetName=billingSheets[0];
+  showPreview();
+}
+
+async function parsePDF(buf){
+  log(`Loading PDF: ${currentFileName}`,'info');
+  try{
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+
+    // Collect all text items from all pages with positions
+    const allItems=[];
+    for(let p=1;p<=pdf.numPages;p++){
+      const page=await pdf.getPage(p);
+      const tc=await page.getTextContent();
+      for(const item of tc.items){
+        if(!item.str.trim())continue;
+        allItems.push({x:Math.round(item.transform[4]),y:Math.round(item.transform[5]),text:item.str.trim(),page:p});
+      }
+    }
+
+    if(allItems.length===0){log('No text in PDF','err');return;}
+
+    // Group by Y to form rows
+    const yGroups={};
+    for(const item of allItems){
+      // Group Y values within 3px tolerance
+      let foundY=null;
+      for(const yk of Object.keys(yGroups)){
+        if(Math.abs(Number(yk)-item.y)<=3){foundY=yk;break;}
+      }
+      const key=foundY||item.y;
+      if(!yGroups[key])yGroups[key]=[];
+      yGroups[key].push(item);
+    }
+
+    // Sort rows top-to-bottom (higher Y = higher on page in PDF coords)
+    const sortedYs=Object.keys(yGroups).map(Number).sort((a,b)=>b-a);
+
+    // Find table header row to determine column X positions
+    let tableHeaderY=null;
+    for(const y of sortedYs){
+      const rowText=yGroups[y].map(i=>i.text).join(' ').toLowerCase();
+      if(/\bdate\b/.test(rowText)&&(/operat|total|hours/.test(rowText))){
+        tableHeaderY=y;
+        break;
+      }
+    }
+
+    // Determine column boundaries from the header row (or use all X positions)
+    let colXs=[];
+    if(tableHeaderY!==null){
+      const hItems=yGroups[tableHeaderY].sort((a,b)=>a.x-b.x);
+      // Merge header items into columns using keyword recognition
+      // Known billing header words — if merging two items produces a known word, merge them
+      const knownHeaders=/^(date|operating|reduced|breakdown|special|rigmove|rig move|total|hours|description|statistical|rate|zero|force|standby|repair|obm|upgrade|sbm)$/i;
+
+      for(const item of hItems){
+        const prev=colXs.length>0?colXs[colXs.length-1]:null;
+        if(prev){
+          const gap=item.x-prev.x;
+          const merged=(prev.text+item.text).replace(/[\s\-]/g,'');
+          const prevClean=prev.text.replace(/[\s\-]/g,'');
+          // Merge if: produces a known keyword, OR is a tiny fragment (1-2 chars), OR gap < 15px
+          const formsKnown=knownHeaders.test(merged);
+          const isFragment=item.text.replace(/[\s\.\-]/g,'').length<=2;
+          const isTiny=gap<15;
+          if(formsKnown||isFragment||isTiny){
+            prev.text+=item.text;
+            continue;
+          }
+        }
+        colXs.push({x:item.x,text:item.text});
+      }
+      log(`  PDF columns after merge: ${colXs.map(c=>c.text).join(' | ')}`,'info');
+    }
+
+    // Build table rows: assign each text item to nearest column
+    const allRows=[];
+    for(const y of sortedYs){
+      const items=yGroups[y].sort((a,b)=>a.x-b.x);
+
+      if(colXs.length>=3){
+        // Map items to columns using column start positions as boundaries
+        // Each column "owns" the range from its X to the next column's X
+        const row=new Array(colXs.length).fill('');
+        for(const item of items){
+          // Find which column: item belongs to the column whose X is <= item.x
+          // and the next column's X is > item.x (i.e., item falls between this col start and next col start)
+          let col=0;
+          for(let c=colXs.length-1;c>=0;c--){
+            if(item.x>=colXs[c].x-10){ // 10px tolerance for slight left shifts
+              col=c;
+              break;
+            }
+          }
+          row[col]=(row[col]?row[col]+' ':'')+item.text;
+        }
+        // Clean up spaced numbers (Docusign PDFs add spaces: "0.5 0" → "0.50", "2 4 . 0 0" → "24.00")
+        for(let c=0;c<row.length;c++){
+          if(!row[c])continue;
+          // If it looks like a number with spaces, remove spaces
+          const cleaned=row[c].replace(/\s+/g,'');
+          if(/^\d+\.?\d*$/.test(cleaned)&&row[c].includes(' ')){
+            row[c]=cleaned;
+          }
+          // Also clean dates with spaces: "04- 03- 2026" → "04-03-2026"
+          if(/^\d{1,2}\s*-\s*\d{1,2}\s*-\s*\d{4}$/.test(row[c])){
+            row[c]=row[c].replace(/\s+/g,'');
+          }
+        }
+        allRows.push(row);
+      }else{
+        // No column structure detected yet, just list items
+        allRows.push(items.map(i=>i.text));
+      }
+    }
+
+    if(allRows.length===0){log('No rows extracted from PDF','err');return;}
+
+    log(`PDF parsed: ${allRows.length} rows, ${colXs.length} columns detected`,'info');
+    if(colXs.length>0){
+      log(`PDF columns: ${colXs.map(c=>c.text).join(' | ')}`,'info');
+    }
+
+    currentRawSheets={'PDF':{formatted:allRows,raw:allRows}};
+    currentSheetName='PDF';
+    document.getElementById('sheetSelect').innerHTML='<option>PDF</option>';
+    showPreview();
+  }catch(e){log(`PDF error: ${e.message}`,'err');}
+}
+
+// ============================================
+// STEP 2: PREVIEW & MAPPING
+// ============================================
+function showPreview(){
+  // Show log automatically during preview
+  document.getElementById('logBox').style.display='block';
+  // Show/hide skip and batch buttons based on queue or pending sheets
+  const hasMore=fileQueue.length>0||pendingSheets.length>0;
+  document.getElementById('skipBtn').style.display=hasMore?'':'none';
+  document.getElementById('extractAllBtn').style.display=pendingSheets.length>0?'':'none';
+  // Switch to step 2
+  setStep(2);
+
+  const sheet=currentRawSheets[currentSheetName];
+  currentRawData=sheet.raw;
+  const formatted=sheet.formatted;
+
+  document.getElementById('previewFileName').textContent=currentFileName+getQueueStatus();
+  document.getElementById('previewSheetInfo').textContent=`Sheet: ${currentSheetName} | ${currentRawData.length} rows`;
+
+  // Auto-detect header row — try formatted first, then raw
+  currentHeaderRow=findHeaderRow(formatted.length?formatted:currentRawData);
+  if(currentHeaderRow<0)currentHeaderRow=findHeaderRow(currentRawData);
+  const hintEl=document.getElementById('detectedHeaderRowNum');
+  const hintBox=document.getElementById('headerRowHint');
+  // Log what we found for debugging
+  if(currentHeaderRow>=0){
+    const hRow=(formatted.length?formatted:currentRawData)[currentHeaderRow]||[];
+    log(`  Header row ${currentHeaderRow+1}: ${hRow.map(v=>safeStr(v).replace(/\n/g,' ').substring(0,20)).filter(Boolean).join(' | ')}`,'info');
+    if(hintEl)hintEl.textContent=currentHeaderRow+1;
+    if(hintBox)hintBox.className='step-hint';
+  }else{
+    log('  WARNING: Could not auto-detect header row. Click a row in the preview to set it manually.','err');
+    if(hintEl)hintEl.textContent='not detected';
+    if(hintBox)hintBox.className='step-hint';
+    if(hintBox)hintBox.style.borderLeftColor='var(--orange)';
+  }
+
+  // Auto-detect meta
+  const meta=detectMeta(formatted.length?formatted:currentRawData, currentHeaderRow>=0?currentHeaderRow:10);
+  if(currentRigNum)document.getElementById('metaRig').value=currentRigNum;
+  else if(meta.rig)document.getElementById('metaRig').value=meta.rig;
+  document.getElementById('metaCust').value=meta.cust||RIG_CUST[currentRigNum]||'PDO';
+  document.getElementById('metaWell').value=meta.well||'';
+  document.getElementById('metaContract').value=meta.contract||'';
+  document.getElementById('metaPO').value=meta.po||'';
+  document.getElementById('metaHeaderRow').value=currentHeaderRow>=0?currentHeaderRow+1:'';
+
+  renderPreviewTable();
+  buildMappingUI();
+  if(currentHeaderRow>=0)autoMap();
+}
+
+function renderPreviewTable(){
+  const data=currentRawSheets[currentSheetName].formatted;
+  const rawData=currentRawSheets[currentSheetName].raw;
+  const useData=data&&data.length?data:rawData;
+  const maxRows=Math.min(useData.length,60);
+
+  // Classify sections
+  const sections=classifyRows(useData,currentHeaderRow);
+
+  // Find max columns
+  let maxCols=0;
+  for(let r=0;r<maxRows;r++){if(useData[r])maxCols=Math.max(maxCols,useData[r].length);}
+  maxCols=Math.min(maxCols,20);
+
+  let html='<table class="preview-table"><thead><tr><th class="row-num">#</th><th style="width:60px">Section</th>';
+  for(let c=0;c<maxCols;c++) html+=`<th>Col ${c+1}</th>`;
+  html+='</tr></thead><tbody>';
+
+  for(let r=0;r<maxRows;r++){
+    const row=useData[r]||[];
+    const isHeader=r===currentHeaderRow;
+
+    // Determine section and style
+    let sectionLabel='',rowStyle='';
+    if(currentHeaderRow>=0){
+      if(r<currentHeaderRow){sectionLabel='<span style="color:var(--blue);font-size:.55rem">HEADER</span>';rowStyle='background:rgba(59,130,246,.06)';}
+      else if(r===currentHeaderRow){sectionLabel='<span style="color:var(--cyan);font-size:.55rem;font-weight:700">TABLE HDR</span>';rowStyle='background:rgba(6,182,212,.15)';}
+      else if(r<=sections.dataEnd){sectionLabel='<span style="color:var(--green);font-size:.55rem">DATA</span>';rowStyle='';}
+      else{sectionLabel='<span style="color:var(--text3);font-size:.55rem">FOOTER</span>';rowStyle='background:rgba(100,116,139,.08);opacity:.6';}
+    }
+
+    html+=`<tr class="${isHeader?'header-row':''}" onclick="clickRow(${r})" style="cursor:pointer;${rowStyle}">`;
+    html+=`<td class="row-num">${r+1}</td>`;
+    html+=`<td style="text-align:center">${sectionLabel}</td>`;
+    for(let c=0;c<maxCols;c++){
+      const v=c<row.length?safeStr(row[c]).replace(/\n/g,' '):'';
+      const display=v.length>40?v.substring(0,40)+'...':v;
+      html+=`<td title="${v.replace(/"/g,'&quot;')}">${display}</td>`;
+    }
+    html+='</tr>';
+  }
+  if(useData.length>60) html+=`<tr><td colspan="${maxCols+2}" style="text-align:center;color:var(--text3)">... ${useData.length-60} more rows</td></tr>`;
+  html+='</tbody></table>';
+
+  document.getElementById('previewScroll').innerHTML=html;
+}
+
+function clickRow(rowIdx){
+  currentHeaderRow=rowIdx;
+  document.getElementById('metaHeaderRow').value=rowIdx+1;
+  const hintEl=document.getElementById('detectedHeaderRowNum');
+  if(hintEl)hintEl.textContent=rowIdx+1;
+  renderPreviewTable();
+  buildMappingUI();
+  autoMap();
+  log(`Header row set to ${rowIdx+1} (clicked)`,'info');
+}
+
+function switchSheet(){
+  currentSheetName=document.getElementById('sheetSelect').value;
+  showPreview();
+}
+
+function setHeaderRow(){
+  const v=parseInt(document.getElementById('metaHeaderRow').value);
+  if(v>=1){
+    currentHeaderRow=v-1;
+    renderPreviewTable();
+    buildMappingUI();
+    autoMap();
+    log(`Header row set to ${v} (manual)`,'info');
+  }
+}
+
+function cancelPreview(){
+  fileQueue=[];
+  setStep(1);
+  document.getElementById('panelPreview').style.display='none';
+  document.getElementById('panelDrop').style.display='';
+}
+
+function skipFile(){
+  log(`Skipped ${currentFileName} / ${currentSheetName}`,'info');
+  if(pendingSheets.length>0){
+    const nextSheet=pendingSheets.shift();
+    currentSheetName=nextSheet;
+    document.getElementById('sheetSelect').value=nextSheet;
+    showPreview();
+  }else if(fileQueue.length>0){
+    processNextFile();
+  }else{
+    setStep(1);
+  }
+}
+
+function extractAllSheets(){
+  // Extract current sheet + all pending sheets in one go
+  log(`Extracting all sheets: ${currentSheetName} + ${pendingSheets.join(', ')}`,'info');
+  const allSheets=[currentSheetName,...pendingSheets];
+  pendingSheets=[];
+
+  let totalNew=0,totalMerged=0;
+  const rigNum=parseInt(document.getElementById('metaRig').value)||currentRigNum;
+  const cust=document.getElementById('metaCust').value;
+  const well=document.getElementById('metaWell').value;
+  const contract=document.getElementById('metaContract').value;
+  const po=document.getElementById('metaPO').value;
+
+  if(!rigNum){log('Please enter rig number','err');return;}
+
+  const isPDF=/\.pdf$/i.test(currentFileName);
+
+  for(const sn of allSheets){
+    currentSheetName=sn;
+    currentRawData=currentRawSheets[sn].raw;
+    const formatted=currentRawSheets[sn].formatted;
+
+    // Find header for this sheet
+    currentHeaderRow=findHeaderRow(formatted.length?formatted:currentRawData);
+    if(currentHeaderRow<0){
+      log(`  Sheet "${sn}": no header found, skipping`,'err');
+      continue;
+    }
+
+    // Build mapping
+    buildMappingUI();
+    autoMap();
+
+    // Extract
+    applyMapping();
+    if(!currentExtractedRows||currentExtractedRows.length===0){
+      log(`  Sheet "${sn}": no rows extracted, skipping`,'info');
+      continue;
+    }
+
+    // Save (using unified smart merge)
+    if(!rigStore[rigNum])rigStore[rigNum]={meta:{},rows:[],files:[]};
+    rigStore[rigNum].meta={customer:cust,well:well||sn,contract,po};
+
+    const sourceLabel=isPDF?'PDF (approved)':'Excel';
+    const result=mergeRowsIntoRig(rigNum, currentExtractedRows, sourceLabel, null);
+    totalNew+=result.newDays;totalMerged+=result.mergedDays;
+    log(`  Sheet "${sn}": +${result.newDays} new, ${result.mergedDays} merged`,'ok');
+  }
+
+  if(!rigStore[rigNum].files.includes(currentFileName))rigStore[rigNum].files.push(currentFileName);
+
+  updateRigList();
+  updateStats();
+  autoSave();
+  log(`All sheets done: +${totalNew} new, ${totalMerged} merged. Rig ${rigNum} total: ${rigStore[rigNum].rows.length} days.`,'ok');
+
+  // Show result for the rig
+  currentExtractedRows=rigStore[rigNum].rows;
+  showResult(rigNum,cust,rigStore[rigNum].meta.well,contract,po,rigStore[rigNum].rows);
+}
+
+function acceptAllRemaining(){
+  // Accept current result, then auto-extract all pending sheets
+  acceptData();
+  // acceptData already advances to next sheet — now auto-process remaining
+  if(pendingSheets.length>0){
+    extractAllSheets();
+  }
+}
+
+// ============================================
+// MAPPING UI (grouped: essentials / hours / OBM / text)
+// ============================================
+const MAP_GROUPS = {
+  essentials: ['date','operating','total_hrs_repair'],
+  hours:      ['reduced','breakdown','special','force_maj','zero_rate','standby','repair','rig_move'],
+  obm:        ['obm_oper','obm_red','obm_bd','obm_spe','obm_zero'],
+  text:       ['operation','remarks'],
+};
+// total_hrs is auto-calculated; total_hrs_repair is kept in essentials as a secondary hour input
+// but we also want "total_hrs" mappable (for break detection). Add it back:
+if(!MAP_GROUPS.essentials.includes('total_hrs'))MAP_GROUPS.essentials.splice(2,0,'total_hrs');
+
+function toggleGroup(groupId){
+  const el=document.getElementById(groupId);
+  if(el)el.classList.toggle('collapsed');
+}
+
+function buildMappingUI(){
+  const colOptions=getColOptions();
+  const byKey={};for(const tc of TARGET_COLS)byKey[tc.key]=tc;
+  // TARGET_COLS doesn't have total_hrs — add a virtual one for break detection
+  if(!byKey.total_hrs)byKey.total_hrs={key:'total_hrs',label:'Total Hrs (file)',type:'num'};
+
+  const grids={essentials:'mapGridEssentials',hours:'mapGridHours',obm:'mapGridObm',text:'mapGridText'};
+  for(const grp of Object.keys(grids)){
+    const grid=document.getElementById(grids[grp]);
+    if(!grid)continue;
+    grid.innerHTML='';
+    for(const key of MAP_GROUPS[grp]){
+      const tc=byKey[key];if(!tc)continue;
+      const div=document.createElement('div');
+      div.className='map-item';
+      div.id=`map-${tc.key}`;
+      div.innerHTML=`<label>${tc.label}</label><select id="sel-${tc.key}" onchange="updateMapStatus('${tc.key}')">
+        <option value="-1">-- not mapped --</option>
+        ${colOptions}
+      </select>`;
+      grid.appendChild(div);
+    }
+  }
+  updateGroupCounts();
+}
+
+function updateGroupCounts(){
+  const counts={essentials:'cntEssentials',hours:'cntHours',obm:'cntObm',text:'cntText'};
+  for(const grp of Object.keys(counts)){
+    const keys=MAP_GROUPS[grp];
+    let mapped=0;
+    for(const k of keys){const sel=document.getElementById(`sel-${k}`);if(sel&&parseInt(sel.value)>=0)mapped++;}
+    const el=document.getElementById(counts[grp]);
+    if(el){
+      el.textContent=`${mapped} / ${keys.length} mapped`;
+      el.className='count-mapped'+(mapped===keys.length?' all':'');
+    }
+  }
+  // Overall status line
+  const statusEl=document.getElementById('mapStatus');
+  if(statusEl){
+    const dateMapped=(document.getElementById('sel-date')||{}).value>=0;
+    const operMapped=(document.getElementById('sel-operating')||{}).value>=0;
+    if(dateMapped&&operMapped)statusEl.innerHTML='<span style="color:var(--green)">Ready to extract</span>';
+    else statusEl.innerHTML='<span style="color:var(--orange)">Map at least Date and Operating</span>';
+  }
+}
+
+function getColOptions(){
+  if(!currentRawData||currentHeaderRow<0)return'';
+  const data=currentRawSheets[currentSheetName].formatted;
+  const useData=data&&data.length?data:currentRawData;
+  const hRow=useData[currentHeaderRow]||[];
+  const rawRow=currentRawData[currentHeaderRow]||[];
+  let opts='';
+  const maxCols=Math.min(Math.max(hRow.length,rawRow.length),20);
+  for(let c=0;c<maxCols;c++){
+    // Show best available name from either formatted or raw
+    let name=safeStr(hRow[c]).replace(/\n/g,' ')||safeStr(rawRow[c]).replace(/\n/g,' ')||`(Col ${c+1})`;
+    const display=name.length>30?name.substring(0,30)+'...':name;
+    opts+=`<option value="${c}">Col ${c+1}: ${display}</option>`;
+  }
+  // Also add columns beyond header if data has more
+  if(useData.length>currentHeaderRow+1){
+    const dataRow=useData[currentHeaderRow+1]||[];
+    for(let c=maxCols;c<Math.min(dataRow.length,25);c++){
+      opts+=`<option value="${c}">Col ${c+1}: (no header)</option>`;
+    }
+  }
+  return opts;
+}
+
+function autoMap(){
+  const data=currentRawSheets[currentSheetName].formatted;
+  const useData=data&&data.length?data:currentRawData;
+  if(currentHeaderRow<0||!useData[currentHeaderRow])return;
+
+  // Use both formatted and raw to build best header row
+  const fmtRow=(data&&data.length?data:currentRawData)[currentHeaderRow]||[];
+  const rawRow=currentRawData[currentHeaderRow]||[];
+  // Merge: prefer formatted text, but if it looks like a date/number (not a header), use raw
+  const hRow=[];
+  const maxLen=Math.max(fmtRow.length,rawRow.length);
+  for(let i=0;i<maxLen;i++){
+    const fv=safeStr(fmtRow[i]).replace(/\n/g,' ');
+    const rv=safeStr(rawRow[i]).replace(/\n/g,' ');
+    // If formatted looks like a date string (dd/mm/yyyy etc) but raw is text, use raw
+    if(/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(fv)&&rv&&!/^\d/.test(rv)){hRow.push(rv);}
+    // If formatted is empty but raw has text, use raw
+    else if(!fv&&rv){hRow.push(rv);}
+    else{hRow.push(fv||rv);}
+  }
+  const detected=autoMapHeaders(hRow);
+
+  // Second pass: detect unnamed text columns (Operation without header)
+  const useData2=data&&data.length?data:currentRawData;
+  detectUnnamedTextColumns(detected, useData2, currentHeaderRow);
+
+  log(`Auto-map headers: [${hRow.join(' | ')}]`,'info');
+  log(`Auto-map result: ${JSON.stringify(detected)}`,'info');
+
+  // Also check if row 10 has "Total" and row 11 has "Hours" (OXY split header)
+  // Merge row above header if it has column labels
+  if(currentHeaderRow>0){
+    const prevRow=(useData[currentHeaderRow-1]||[]).map(v=>safeStr(v));
+    for(let c=0;c<prevRow.length;c++){
+      if(prevRow[c]&&hRow[c]){
+        // Combine: e.g., "Total" + "Hours" = "Total Hours"
+        const combined=(prevRow[c]+' '+hRow[c]).toLowerCase();
+        if(/(total\s*h|total\s*hrs)/.test(combined)&&!detected.total_hrs){detected.total_hrs=c;log(`  Combined header: Col ${c+1} = "${prevRow[c]} ${hRow[c]}" -> total_hrs`,'info');}
+        if(/operation/i.test(combined)&&!detected.operation){detected.operation=c;}
+      }
+    }
+  }
+
+  // Set selects
+  for(const tc of TARGET_COLS){
+    const sel=document.getElementById(`sel-${tc.key}`);
+    if(sel){
+      sel.value=detected[tc.key]!==undefined?detected[tc.key]:-1;
+      updateMapStatus(tc.key);
+    }
+  }
+
+  currentMapping=detected;
+}
+
+function updateMapStatus(key){
+  const sel=document.getElementById(`sel-${key}`);
+  const div=document.getElementById(`map-${key}`);
+  if(!sel||!div)return;
+  div.className='map-item '+(parseInt(sel.value)>=0?'mapped':'unmapped');
+  updateGroupCounts();
+}
+
+// ============================================
+// APPLY MAPPING -> EXTRACT
+// ============================================
+function applyMapping(){
+  // Read current mapping from UI
+  const map={};
+  for(const tc of TARGET_COLS){
+    const v=parseInt(document.getElementById(`sel-${tc.key}`).value);
+    if(v>=0)map[tc.key]=v;
+  }
+  currentMapping=map;
+
+  const rigNum=parseInt(document.getElementById('metaRig').value)||currentRigNum;
+  const cust=document.getElementById('metaCust').value;
+  const well=document.getElementById('metaWell').value;
+  const contract=document.getElementById('metaContract').value;
+  const po=document.getElementById('metaPO').value;
+
+  if(!rigNum){log('Please enter rig number','err');return;}
+
+  // Extract rows
+  const rawData=currentRawSheets[currentSheetName].raw;
+  const formatted=currentRawSheets[currentSheetName].formatted;
+  const useRaw=rawData;
+  const useFmt=formatted&&formatted.length?formatted:rawData;
+
+  // Determine data boundaries using section classifier
+  const useFmtFull=formatted&&formatted.length?formatted:rawData;
+  const sections=classifyRows(useFmtFull,currentHeaderRow);
+  log(`Sections: data rows ${sections.dataStart+1} to ${sections.dataEnd+1}, footer at ${sections.footerStart+1}`,'info');
+
+  const rows=[];
+  for(let r=currentHeaderRow+1;r<useRaw.length;r++){
+    const row=useRaw[r]||[];
+    const fmtRow=useFmt[r]||[];
+
+    // Stop at footer
+    if(r>sections.dataEnd)break;
+    if(isFooterRow(fmtRow,map.date!==undefined?map.date:0))break;
+
+    // Date
+    const dIdx=map.date!==undefined?map.date:0;
+    let dateStr=toDateStr(row[dIdx]);
+    if(!dateStr&&fmtRow[dIdx])dateStr=toDateStr(fmtRow[dIdx]);
+    if(!dateStr)continue;
+
+    // Use file's total only for break detection (summary rows have total > 24)
+    const totalIdx=map.total_hrs;
+    const fileTotal=totalIdx!==undefined?safeNum(row[totalIdx]):0;
+    if(fileTotal>24.5)break;
+
+    // Skip text summary rows
+    const firstVal=safeStr(fmtRow[dIdx]||row[dIdx]).toLowerCase();
+    if(/^(hrs|days|daily|total$|net|amount|hour)/.test(firstVal))break;
+
+    const gn=(key)=>map[key]!==undefined?safeNum(row[map[key]]):0;
+    const gs=(key)=>map[key]!==undefined?safeStr(fmtRow[map[key]]||row[map[key]]):'';
+
+    // Extract individual hour values
+    const operating=gn('operating'), reduced=gn('reduced'), breakdown=gn('breakdown');
+    const special=gn('special'), force_maj=gn('force_maj'), zero_rate=gn('zero_rate');
+    const standby=gn('standby'), repair=gn('repair'), rig_move=gn('rig_move');
+
+    // Calculate total as sum of all hour categories (validation, not from file)
+    const calcTotal=operating+reduced+breakdown+special+force_maj+zero_rate+standby+repair+rig_move;
+
+    rows.push({
+      date:dateStr,
+      operating,reduced,breakdown,special,force_maj,zero_rate,standby,repair,rig_move,
+      total_hrs:calcTotal,
+      obm_oper:gn('obm_oper'),obm_red:gn('obm_red'),obm_bd:gn('obm_bd'),
+      obm_spe:gn('obm_spe'),obm_zero:gn('obm_zero'),
+      operation:gs('operation'),total_hrs_repair:gn('total_hrs_repair'),remarks:gs('remarks'),
+    });
+  }
+
+  currentRigNum=rigNum;
+  currentExtractedRows=rows;
+
+  log(`Extracted ${rows.length} rows for Rig ${rigNum}`,'ok');
+  showResult(rigNum,cust,well,contract,po,rows);
+}
+
+// ============================================
+// STEP 3: RESULT (editable)
+// ============================================
+function showResult(rigNum,cust,well,contract,po,rows){
+  setStep(3);
+  const daysInMonth=getDaysInMonth();
+  const monthName=getBillingMonthName();
+
+  // --- compute stats ---
+  const tl=buildTimeline({rows});
+  const complete=rows.filter(r=>r.total_hrs>=23.5).length;
+  const partial=rows.filter(r=>r.total_hrs>0&&r.total_hrs<23.5).length;
+  const missing=daysInMonth-rows.length;
+  const pct=daysInMonth?Math.round((complete/daysInMonth)*100):0;
+  const pctCls=pct>=95?'ok':pct>=70?'warn':'bad';
+
+  // --- 3.1 summary strip ---
+  document.getElementById('resultSummary').innerHTML=`
+    <div class="sum-item"><span class="sum-label">Rig</span><span class="sum-val" style="color:var(--cyan)">${rigNum}</span></div>
+    <div class="sum-item"><span class="sum-label">Customer</span><span class="sum-val">${cust||'—'}</span></div>
+    <div class="sum-item" style="flex:1;min-width:120px"><span class="sum-label">Well</span><span class="sum-val" style="font-size:.85rem">${well||'—'}</span></div>
+    <div class="sum-item"><span class="sum-label">Days</span><span class="sum-val ${pctCls}">${rows.length} / ${daysInMonth}</span></div>
+    <div class="sum-item"><span class="sum-label">Complete</span><span class="sum-val ${pctCls}">${pct}%</span></div>
+    ${partial>0?`<div class="sum-item"><span class="sum-label">Partial</span><span class="sum-val warn">${partial}</span></div>`:''}
+    ${missing>0?`<div class="sum-item"><span class="sum-label">Missing</span><span class="sum-val bad">${missing}</span></div>`:''}
+  `;
+  document.getElementById('resultTimelineTitle').textContent=`${monthName} ${billingYear} — ${complete} full, ${partial} partial, ${missing} missing`;
+  document.getElementById('resultTitle').textContent=`${rows.length} rows loaded${getQueueStatus()}`;
+
+  // --- 3.2 timeline ---
+  const dayMap={};
+  for(const row of rows){const d=parseDate(row.date);if(d)dayMap[d.getDate()]={total:row.total_hrs||0,operating:row.operating||0};}
+  let tlHtml='<div style="display:flex;gap:2px;align-items:end;height:40px">';
+  for(let d=1;d<=daysInMonth;d++){
+    const rec=dayMap[d];
+    if(!rec){
+      tlHtml+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px">
+        <div style="width:100%;height:28px;background:var(--red);opacity:.25;border-radius:2px" title="${monthName} ${d}: no data"></div>
+        <span style="font-size:.5rem;color:var(--red)">${d}</span></div>`;
+    }else{
+      const pct=Math.min(rec.total/24,1);
+      const bg=pct>=0.98?'var(--green)':'var(--orange)';
+      const h=Math.max(4,Math.round(pct*28));
+      tlHtml+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px" title="${monthName} ${d}: ${rec.total}h${pct<0.98?` (${(24-rec.total).toFixed(1)}h gap)`:''}">
+        <div style="width:100%;height:${28-h}px"></div>
+        <div style="width:100%;height:${h}px;background:${bg};border-radius:2px" onclick="scrollToDay(${d})"></div>
+        <span style="font-size:.5rem;color:var(--text3)">${d}</span></div>`;
+    }
+  }
+  tlHtml+='</div>';
+  document.getElementById('resultTimeline').innerHTML=tlHtml;
+
+  // --- 3.3 data table with grouped column headers ---
+  let html='<table class="result-table">';
+  // Row 1: group labels
+  html+='<thead><tr class="grp-hdr"><th colspan="3"></th>';
+  html+='<th class="grp-hrs" colspan="9">Hour categories</th>';
+  html+='<th class="grp-hrs" colspan="1">Total</th>';
+  html+='<th class="grp-obm" colspan="5">OBM (Oil-Based Mud)</th>';
+  html+='<th class="grp-ops" colspan="3">Description</th>';
+  html+='</tr>';
+  // Row 2: column labels
+  html+='<tr>';
+  html+='<th class="cat-meta">&nbsp;</th><th class="cat-meta">#</th><th class="cat-meta">Date</th>';
+  html+='<th class="cat-hrs">Operating</th><th class="cat-hrs">Reduced</th><th class="cat-hrs">Breakdown</th><th class="cat-hrs">Special</th>';
+  html+='<th class="cat-hrs">Force&nbsp;Maj</th><th class="cat-hrs">Zero&nbsp;Rate</th><th class="cat-hrs">Standby</th><th class="cat-hrs">Repair</th><th class="cat-hrs">Rig&nbsp;Move</th>';
+  html+='<th class="cat-hrs" title="Auto-calculated: sum of all hour categories">Total *</th>';
+  html+='<th class="cat-obm">Oper</th><th class="cat-obm">Red</th><th class="cat-obm">BD</th><th class="cat-obm">Spe</th><th class="cat-obm">Zero</th>';
+  html+='<th class="cat-ops">Operation</th><th class="cat-ops">Repair&nbsp;Hrs</th><th class="cat-ops">Remarks</th>';
+  html+='</tr></thead><tbody>';
+
+  let totOp=0,totRed=0,totBD=0,totTotal=0;
+  const obmKeys=['obm_oper','obm_red','obm_bd','obm_spe','obm_zero'];
+  const hrColors={operating:'#10b981',reduced:'#f59e0b',breakdown:'#ef4444'};
+
+  rows.forEach((row,i)=>{
+    const total=row.total_hrs||0;
+    let statusCls='bad',statusChar='×';
+    if(total>=23.5){statusCls='ok';statusChar='\u2713';}
+    else if(total>0){statusCls='warn';statusChar='!';}
+    totOp+=row.operating;totRed+=row.reduced;totBD+=row.breakdown;totTotal+=total;
+
+    const d=parseDate(row.date);
+    const dayAttr=d?`data-day="${d.getDate()}"`:'';
+
+    html+=`<tr ${dayAttr} class="${statusCls==='bad'&&total>0?'invalid':''}" data-idx="${i}">`;
+    html+=`<td class="row-status ${statusCls}" title="${statusCls==='ok'?'24h OK':statusCls==='warn'?'Partial day ('+total+'h)':'Missing hours'}">${statusChar}</td>`;
+    html+=`<td>${i+1}</td>`;
+    html+=`<td contenteditable="true" class="editable" data-key="date" style="white-space:nowrap">${row.date}</td>`;
+
+    for(const k of HR_KEYS){
+      const c=hrColors[k]||'';
+      const v=row[k]||0;
+      html+=`<td contenteditable="true" class="editable" data-key="${k}" ${c?`style="color:${c}"`:''} onfocus="this.style.minWidth='60px'" onblur="editCell(this,${i},'${k}');recalcTotal(${i})">${v}</td>`;
+    }
+
+    const gap=24-total;
+    const totalColor=total>=23.5?'#06b6d4':total>0?'#ef4444':'#64748b';
+    const gapText=gap>0.5?` (${gap.toFixed(1)}h gap)`:'';
+    html+=`<td style="color:${totalColor};font-weight:700" title="Calculated: sum of all hour columns${gapText}" data-idx="${i}" data-key="total_hrs">${total}${gap>0.5?' !':''}</td>`;
+
+    for(const k of obmKeys){
+      const v=row[k]||0;
+      html+=`<td contenteditable="true" class="editable" data-key="${k}" onfocus="this.style.minWidth='60px'" onblur="editCell(this,${i},'${k}')">${v}</td>`;
+    }
+
+    html+=`<td contenteditable="true" class="editable text-cell" data-key="operation" style="min-width:280px;max-width:420px;white-space:normal;line-height:1.3" onblur="editCell(this,${i},'operation')" title="${(row.operation||'').replace(/"/g,'&quot;')}">${row.operation||''}</td>`;
+    html+=`<td contenteditable="true" class="editable" data-key="total_hrs_repair" onblur="editCell(this,${i},'total_hrs_repair')">${row.total_hrs_repair||0}</td>`;
+    html+=`<td contenteditable="true" class="editable text-cell" data-key="remarks" onblur="editCell(this,${i},'remarks')">${row.remarks||''}</td>`;
+    html+='</tr>';
+  });
+
+  html+=`<tfoot><tr><td></td><td>Total</td><td>${rows.length} days</td>`;
+  html+=`<td style="color:#10b981">${totOp.toFixed(1)}</td><td style="color:#f59e0b">${totRed.toFixed(1)}</td><td style="color:#ef4444">${totBD.toFixed(1)}</td>`;
+  html+=`<td colspan="6"></td><td style="color:#06b6d4">${totTotal.toFixed(0)}</td><td colspan="8"></td></tr></tfoot>`;
+  html+='</table>';
+
+  document.getElementById('resultScroll').innerHTML=html;
+
+  // --- 3.4 warnings (single clear strip) ---
+  const warnEl=document.getElementById('resultWarnings');
+  warnEl.innerHTML='';
+  const warnings=[];
+  if(rows.length<daysInMonth)warnings.push({type:'warn',msg:`Only ${rows.length} of ${daysInMonth} days loaded — ${daysInMonth-rows.length} day(s) may be in another file.`});
+  if(rows.length>daysInMonth)warnings.push({type:'bad',msg:`${rows.length} rows but month only has ${daysInMonth} days — possible duplicates.`});
+  const badTotals=rows.filter(r=>r.total_hrs>0&&Math.abs(r.total_hrs-24)>0.5);
+  if(badTotals.length)warnings.push({type:'warn',msg:`${badTotals.length} day(s) not totaling 24h. Highlighted in the table.`});
+  if(warnings.length){
+    warnEl.innerHTML='<div class="card" style="padding:10px 14px;margin-top:8px">'+
+      warnings.map(w=>`<div class="hint ${w.type==='bad'?'warn':w.type}" style="font-size:.78rem;margin-bottom:2px">${w.type==='bad'?'\u26a0 ':'\u26a0 '}${w.msg}</div>`).join('')+
+      '</div>';
+  }
+
+  // Show "Accept All" button if there are pending sheets
+  document.getElementById('acceptAllBtn').style.display=pendingSheets.length>0?'':'none';
+}
+
+function scrollToDay(day){
+  const row=document.querySelector(`#resultScroll tr[data-day="${day}"]`);
+  if(row){row.scrollIntoView({behavior:'smooth',block:'center'});row.style.transition='background .3s';const old=row.style.background;row.style.background='rgba(6,182,212,.25)';setTimeout(()=>{row.style.background=old;},1000);}
+}
+
+function editCell(td,rowIdx,key){
+  if(!currentExtractedRows||!currentExtractedRows[rowIdx])return;
+  const v=td.textContent.trim();
+  if(key==='operation'||key==='remarks'||key==='date'){
+    currentExtractedRows[rowIdx][key]=v;
+  }else{
+    currentExtractedRows[rowIdx][key]=safeNum(v);
+    td.textContent=safeNum(v);
+  }
+}
+
+function recalcTotal(rowIdx){
+  if(!currentExtractedRows||!currentExtractedRows[rowIdx])return;
+  const row=currentExtractedRows[rowIdx];
+  const total=HR_KEYS.reduce((s,k)=>s+(row[k]||0),0);
+  row.total_hrs=total;
+  // Update the total cell in the table
+  const td=document.querySelector(`td[data-idx="${rowIdx}"][data-key="total_hrs"]`);
+  if(td){
+    const gap=24-total;
+    const color=total>=23.5?'#06b6d4':total>0?'#ef4444':'#64748b';
+    td.style.color=color;
+    td.textContent=total+(gap>0.5?' !!':'');
+    td.title=`Calculated: ${total}h${gap>0.5?` (${gap.toFixed(1)}h gap)`:''}`;
+  }
+}
+
+function goBackToPreview(){
+  setStep(2);
+}
+
+// ============================================
+// UNIFIED MERGE LOGIC
+// ============================================
+const HR_KEYS=['operating','reduced','breakdown','special','force_maj','zero_rate','standby','repair','rig_move'];
+const TEXT_JOIN_MAX=400; // cap concatenated operation/remarks to prevent runaway growth
+function joinText(oldVal,newVal){
+  if(!oldVal)return newVal;
+  if(!newVal||oldVal===newVal)return oldVal;
+  // Avoid duplicating substrings that are already in oldVal
+  if(String(oldVal).includes(newVal))return oldVal;
+  const combined=oldVal+' | '+newVal;
+  return combined.length<=TEXT_JOIN_MAX?combined:oldVal;
+}
+
+function mergeRowsIntoRig(rigNum, newRows, sourceLabel, fileName){
+  if(!rigStore[rigNum])rigStore[rigNum]={meta:{},rows:[],files:[]};
+  const isPDFSource=sourceLabel.includes('PDF');
+  let newDays=0, mergedDays=0;
+  const conflicts=[];
+
+  for(const newRow of newRows){
+    const idx=rigStore[rigNum].rows.findIndex(r=>r.date===newRow.date);
+    if(idx>=0){
+      const existing=rigStore[rigNum].rows[idx];
+      const existingTotal=HR_KEYS.reduce((s,k)=>s+(existing[k]||0),0);
+      const newTotal=HR_KEYS.reduce((s,k)=>s+(newRow[k]||0),0);
+      const existingSource=existing._source||'unknown';
+
+      // Detect conflicts
+      const hasConflict=existingTotal>0&&newTotal>0&&Math.abs(existingTotal-newTotal)>0.5&&existingTotal>=23.5;
+      if(hasConflict){
+        conflicts.push({date:newRow.date,existingTotal,existingSource,newTotal,newSource:sourceLabel,existing:{...existing},newRow:{...newRow}});
+      }
+
+      const isPartial=existingTotal<23.5;
+      const pdfOverrides=isPDFSource&&existingSource==='Excel';
+
+      for(const key of Object.keys(newRow)){
+        if(key==='total_hrs'||key==='_source')continue;
+        const newVal=newRow[key],oldVal=existing[key];
+        if(typeof newVal==='number'&&newVal!==0){
+          if(pdfOverrides){existing[key]=newVal;}
+          else if(isPartial){existing[key]=(oldVal||0)+newVal;}
+        }else if(typeof newVal==='string'&&newVal){
+          if(pdfOverrides){existing[key]=newVal;}
+          else{existing[key]=joinText(oldVal,newVal);}
+        }
+      }
+
+      // Flag >24h as a conflict (do NOT silently rescale — user must review)
+      let merged=HR_KEYS.reduce((s,k)=>s+(existing[k]||0),0);
+      if(merged>24.5){
+        log(`  ${newRow.date}: merged total = ${merged.toFixed(1)}h (>24h). Review rig — not auto-scaled.`,'err');
+        conflicts.push({date:newRow.date,existingTotal:existingTotal,existingSource,newTotal:merged,newSource:'merged',existing:{...existing},newRow:{...newRow},reason:'overflow'});
+      }
+      existing.total_hrs=merged;
+      existing._source=isPDFSource?'PDF':existing._source;
+      mergedDays++;
+    }else{
+      rigStore[rigNum].rows.push({...newRow,_source:isPDFSource?'PDF':'Excel'});
+      newDays++;
+    }
+  }
+
+  // Sort by date
+  rigStore[rigNum].rows.sort((a,b)=>{const da=parseDate(a.date),db=parseDate(b.date);return(da||0)-(db||0);});
+  if(fileName&&!rigStore[rigNum].files.includes(fileName))rigStore[rigNum].files.push(fileName);
+
+  return{newDays,mergedDays,conflicts};
+}
+
+function acceptData(){
+  const rigNum=parseInt(document.getElementById('metaRig').value)||currentRigNum;
+  const cust=document.getElementById('metaCust').value;
+  const well=document.getElementById('metaWell').value;
+  const contract=document.getElementById('metaContract').value;
+  const po=document.getElementById('metaPO').value;
+
+  if(!rigStore[rigNum])rigStore[rigNum]={meta:{},rows:[],files:[]};
+  rigStore[rigNum].meta={customer:cust,well,contract,po};
+
+  const isPDF=/\.pdf$/i.test(currentFileName);
+  const sourceLabel=isPDF?'PDF (approved)':'Excel';
+
+  const result=mergeRowsIntoRig(rigNum, currentExtractedRows, sourceLabel, currentFileName);
+
+  updateRigList();
+  updateStats();
+  autoSave();
+  log(`Rig ${rigNum}: +${result.newDays} new days, ${result.mergedDays} merged. Total: ${rigStore[rigNum].rows.length} days.`,'ok');
+
+  if(result.conflicts.length>0){
+    log(`CONFLICTS DETECTED: ${result.conflicts.length} day(s) have different hours between files`,'err');
+    showConflicts(rigNum,result.conflicts);
+    return;
+  }
+
+  advanceToNext(rigNum);
+}
+
+function advanceToNext(rigNum){
+  // Process next: pending sheets first, then file queue
+  if(pendingSheets.length>0){
+    const nextSheet=pendingSheets.shift();
+    log(`Loading next sheet: "${nextSheet}" (${pendingSheets.length} more sheets in file)...`,'info');
+    currentSheetName=nextSheet;
+    document.getElementById('sheetSelect').value=nextSheet;
+    showPreview();
+  }else if(fileQueue.length>0){
+    log(`Moving to next file in queue (${fileQueue.length} remaining)...`,'info');
+    processNextFile();
+  }else{
+    setStep(1);
+    selectRig(rigNum);
+  }
+}
+
+function showConflicts(rigNum,conflicts){
+  setStep(3);
+  let html=`<div style="padding:16px">
+    <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:14px;margin-bottom:16px">
+      <strong style="color:var(--red);font-size:.95rem">Hours Conflict Detected — ${conflicts.length} day(s)</strong>
+      <div style="color:var(--text2);font-size:.82rem;margin-top:4px">
+        Two files have different hour totals for the same day(s). PDF (approved billing) takes priority.
+        Review below and adjust if needed before continuing.
+      </div>
+    </div>
+    <table class="result-table" style="min-width:auto">
+      <thead><tr>
+        <th>Date</th><th>Source 1</th><th>Hours</th><th>Source 2</th><th>Hours</th><th>Diff</th><th>Merged Result</th>
+      </tr></thead><tbody>`;
+
+  for(const c of conflicts){
+    const diff=(c.newTotal-c.existingTotal).toFixed(1);
+    const diffColor=Math.abs(diff)>0.5?'var(--red)':'var(--green)';
+    const merged=rigStore[rigNum].rows.find(r=>r.date===c.date);
+    const mergedTotal=merged?merged.total_hrs:0;
+    html+=`<tr>
+      <td style="white-space:nowrap">${c.date}</td>
+      <td><span style="color:${c.existingSource==='PDF'?'var(--green)':'var(--blue)'};font-size:.7rem">${c.existingSource}</span></td>
+      <td class="num">${c.existingTotal}h</td>
+      <td><span style="color:${c.newSource.includes('PDF')?'var(--green)':'var(--blue)'}; font-size:.7rem">${c.newSource}</span></td>
+      <td class="num">${c.newTotal}h</td>
+      <td class="num" style="color:${diffColor}">${diff>0?'+':''}${diff}h</td>
+      <td class="num" style="font-weight:700;color:var(--cyan)">${mergedTotal}h</td>
+    </tr>`;
+  }
+
+  html+=`</tbody></table>
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="selectRig(${rigNum})">Review Rig Data</button>
+      <button class="btn btn-sm btn-primary" onclick="advanceToNext(${rigNum})">Continue (Accept Merged)</button>
+    </div>
+  </div>`;
+
+  document.getElementById('resultScroll').innerHTML=html;
+  document.getElementById('resultTitle').textContent=`Rig ${rigNum} — Conflicts Detected`;
+  document.getElementById('resultWarnings').innerHTML='';
+}
+
+function parseDate(s){if(!s)return null;const m=s.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})$/);if(m){const mi=MONTHS.findIndex(x=>x.toLowerCase()===m[2].toLowerCase());if(mi>=0)return new Date(parseInt(m[3]),mi,parseInt(m[1]));}return null;}
+
+// ============================================
+// STEP MANAGEMENT
+// ============================================
+function setStep(n){
+  document.getElementById('step1').className='step'+(n===1?' active':n>1?' done':'');
+  document.getElementById('step2').className='step'+(n===2?' active':n>2?' done':'');
+  document.getElementById('step3').className='step'+(n===3?' active':'');
+  document.getElementById('panelDrop').style.display=n===1?'':'none';
+  document.getElementById('panelPreview').style.display=n===2?'':'none';
+  document.getElementById('panelResult').style.display=n===3?'':'none';
+}
+
+// ============================================
+// RIG LIST (left panel)
+// ============================================
+function buildTimeline(store){
+  // Build a 31-day array: each day = {total, operating, status}
+  const dayMap={};
+  if(store&&store.rows){
+    for(const row of store.rows){
+      const d=parseDate(row.date);
+      if(d)dayMap[d.getDate()]={total:row.total_hrs||0,operating:row.operating||0};
+    }
+  }
+
+  let html='<div class="timeline-31">';
+  let missingHrs=0;
+  let missingDays=0;
+  let incompleteDays=0;
+
+  for(let d=1;d<=getDaysInMonth();d++){
+    const rec=dayMap[d];
+    if(!rec){
+      // No data for this day
+      if(store&&store.rows&&store.rows.length>0){
+        html+=`<div class="day-cell missing" title="${getBillingMonthName()} ${d}: NO DATA — 24 hrs missing"></div>`;
+        missingHrs+=24;
+        missingDays++;
+      }else{
+        html+=`<div class="day-cell empty" title="${getBillingMonthName()} ${d}"></div>`;
+      }
+    }else if(rec.total>=23.5){
+      // Full day (24 hrs ±0.5)
+      html+=`<div class="day-cell full" title="${getBillingMonthName()} ${d}: ${rec.total}h total, ${rec.operating}h oper"></div>`;
+    }else{
+      // Partial day — less than 24
+      const gap=24-rec.total;
+      html+=`<div class="day-cell partial-day" title="${getBillingMonthName()} ${d}: ${rec.total}h total — ${gap.toFixed(1)}h missing"></div>`;
+      missingHrs+=gap;
+      incompleteDays++;
+    }
+  }
+  html+='</div>';
+
+  // Missing hours summary
+  if(store&&store.rows&&store.rows.length>0&&(missingDays>0||incompleteDays>0)){
+    const parts=[];
+    if(missingDays>0)parts.push(`${missingDays} missing day${missingDays>1?'s':''}`);
+    if(incompleteDays>0)parts.push(`${incompleteDays} incomplete`);
+    parts.push(`${missingHrs.toFixed(0)}h gap`);
+    // Missing summary only shown in tooltips, not in card (saves space)
+  }
+
+  return{html,missingDays,incompleteDays,missingHrs};
+}
+
+function buildRigList(){
+  const el=document.getElementById('rigList');
+  el.innerHTML='';
+  for(const rig of RIGS){
+    const cust=RIG_CUST[rig];
+    const color=CUST_COLORS[cust]||'#666';
+    const store=rigStore[rig];
+    const days=store?store.rows.length:0;
+    const hasData=days>0;
+
+    const tl=buildTimeline(store);
+    const isComplete=hasData&&days===getDaysInMonth()&&tl.missingDays===0&&tl.incompleteDays===0;
+    const isPartial=hasData&&!isComplete;
+
+    const div=document.createElement('div');
+    div.className='rig-item'+(isComplete?' complete':isPartial?' partial has-data':hasData?' has-data':'');
+    div.id=`ri-${rig}`;
+    div.innerHTML=`
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:1px">
+        <span class="r-num">${rig}</span>
+        <span class="r-cust" style="background:${color}22;color:${color}">${cust}</span>
+        <span class="r-days" style="margin-left:auto">${days}/${getDaysInMonth()}</span>
+      </div>
+      ${tl.html}
+    `;
+    div.onclick=()=>selectRig(rig);
+    el.appendChild(div);
+  }
+}
+
+function updateRigList(){buildRigList();}
+
+function selectRig(rig){
+  document.querySelectorAll('.rig-item').forEach(el=>el.classList.remove('active'));
+  const el=document.getElementById(`ri-${rig}`);
+  if(el)el.classList.add('active');
+  currentRigNum=rig;
+  document.getElementById('metaRig').value=rig;
+  document.getElementById('metaCust').value=RIG_CUST[rig]||'PDO';
+
+  // If rig has data, show it in result view
+  if(rigStore[rig]&&rigStore[rig].rows.length>0){
+    currentExtractedRows=rigStore[rig].rows;
+    showResult(rig,rigStore[rig].meta.customer,rigStore[rig].meta.well,rigStore[rig].meta.contract,rigStore[rig].meta.po,rigStore[rig].rows);
+  }else{
+    setStep(1);
+  }
+}
+
+// ============================================
+// STATS & EXPORT
+// ============================================
+function updateStats(){
+  let rigs=0,rows=0,oper=0;
+  for(const s of Object.values(rigStore)){if(s.rows.length){rigs++;rows+=s.rows.length;oper+=s.rows.reduce((a,r)=>a+r.operating,0);}}
+  document.getElementById('sRigs').textContent=rigs;
+  document.getElementById('sRows').textContent=rows;
+  document.getElementById('sOper').textContent=oper.toFixed(0);
+  updateFleetOverview();
+}
+
+function updateFleetOverview(){
+  const panel=document.getElementById('fleetOverview');
+  const hasAny=Object.values(rigStore).some(s=>s.rows.length>0);
+  panel.style.display=hasAny?'':'none';
+  if(!hasAny)return;
+
+  const grid=document.getElementById('fleetGrid');
+  grid.innerHTML='';
+
+  let totalComplete=0,totalPartial=0,totalMissing=0,totalMissingHrs=0;
+
+  for(const rig of RIGS){
+    const store=rigStore[rig];
+    const days=store?store.rows.length:0;
+    if(!days)continue;
+
+    const tl=buildTimeline(store);
+    const isComplete=days===getDaysInMonth()&&tl.missingDays===0&&tl.incompleteDays===0;
+
+    let bg,textColor;
+    if(isComplete){bg='rgba(16,185,129,.2)';textColor='var(--green)';totalComplete++;}
+    else if(days>=25){bg='rgba(245,158,11,.15)';textColor='var(--orange)';totalPartial++;}
+    else{bg='rgba(239,68,68,.15)';textColor='var(--red)';totalMissing++;}
+
+    totalMissingHrs+=tl.missingHrs;
+
+    const cell=document.createElement('div');
+    cell.style.cssText=`background:${bg};border-radius:3px;padding:2px 4px;text-align:center;cursor:pointer;flex:1;min-width:0`;
+    cell.innerHTML=`<div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.65rem;color:${textColor}">${rig}</div><div style="font-size:.45rem;color:var(--text3)">${days}</div>`;
+    cell.onclick=()=>selectRig(rig);
+    grid.appendChild(cell);
+  }
+
+  const loaded=totalComplete+totalPartial+totalMissing;
+  document.getElementById('fleetSummary').textContent=`${loaded} rigs loaded · ${totalComplete} complete · ${totalPartial+totalMissing} need attention`;
+
+  let missingHtml='';
+  if(totalMissingHrs>0){
+    missingHtml=`<span style="color:var(--red)">Total missing/gap: ${totalMissingHrs.toFixed(0)} hours across fleet</span>`;
+    // List rigs with issues
+    const issues=[];
+    for(const rig of RIGS){
+      const store=rigStore[rig];
+      if(!store||!store.rows.length)continue;
+      const tl=buildTimeline(store);
+      if(tl.missingDays>0||tl.incompleteDays>0){
+        issues.push(`<span style="color:var(--orange)">Rig ${rig}: ${tl.missingDays} missing + ${tl.incompleteDays} incomplete (${tl.missingHrs.toFixed(0)}h)</span>`);
+      }
+    }
+    if(issues.length)missingHtml+='<br>'+issues.join(' · ');
+  }
+  document.getElementById('fleetMissing').innerHTML=missingHtml;
+}
+
+function exportAll(){
+  const allRows=[];
+  for(const rig of RIGS){
+    const s=rigStore[rig];if(!s||!s.rows.length)continue;
+    for(const r of s.rows){
+      allRows.push({Rig:rig,Customer:s.meta.customer,Well:s.meta.well,'Contract No':s.meta.contract,'P.O':s.meta.po,
+        Date:r.date,Operating:r.operating,Reduced:r.reduced,Breakdown:r.breakdown,Special:r.special,
+        'Force Maj':r.force_maj,'Zero Rate':r.zero_rate,Standby:r.standby,Repair:r.repair,'Rig Move':r.rig_move,
+        'Total Hrs':r.total_hrs,'OBM Oper':r.obm_oper,'OBM Red':r.obm_red,'OBM BD':r.obm_bd,'OBM Spe':r.obm_spe,
+        'OBM Zero':r.obm_zero,Operation:r.operation,'Total Hours Repair':r.total_hrs_repair,Remarks:r.remarks});
+    }
+  }
+  if(!allRows.length){alert('No data to export');return;}
+  const ws=XLSX.utils.json_to_sheet(allRows);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'All Rigs');
+  ws['!cols']=[{wch:6},{wch:8},{wch:18},{wch:14},{wch:12},{wch:12},{wch:9},{wch:9},{wch:10},{wch:8},{wch:10},{wch:9},{wch:9},{wch:8},{wch:9},{wch:9},{wch:9},{wch:8},{wch:8},{wch:8},{wch:8},{wch:50},{wch:12},{wch:25}];
+  XLSX.writeFile(wb,`CONSOLIDATED_BILLING_${getBillingMonthName().toUpperCase()}_${billingYear}.xlsx`);
+  log(`Exported ${allRows.length} rows`,'ok');
+}
+
+function clearAll(){if(!confirm('Are you sure you want to clear ALL extracted data for all rigs? This cannot be undone.'))return;for(const k of Object.keys(rigStore))delete rigStore[k];buildRigList();updateStats();setStep(1);clearStorage();log('Cleared all','info');}
+
+// ============================================
+// AUTO-SAVE / AUTO-LOAD (localStorage)
+// ============================================
+const STORAGE_KEY='abraj_billing_extractor_data';
+function autoSave(){
+  try{
+    const data={};
+    for(const rig of RIGS){
+      if(rigStore[rig]&&rigStore[rig].rows.length>0){
+        data[rig]={meta:rigStore[rig].meta,rows:rigStore[rig].rows.map(r=>{const c={...r};delete c._source;return c;}),files:rigStore[rig].files};
+      }
+    }
+    if(Object.keys(data).length>0){
+      localStorage.setItem(STORAGE_KEY,JSON.stringify({savedAt:new Date().toISOString(),billingMonth,billingYear,rigs:data}));
+      log(`Auto-saved ${Object.keys(data).length} rigs to browser storage`,'info');
+    }
+  }catch(e){log('Auto-save failed: '+e.message,'err');}
+}
+function autoLoad(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY);
+    if(!raw)return false;
+    const saved=JSON.parse(raw);
+    if(!saved.rigs)return false;
+    // Restore month/year if saved
+    if(saved.billingMonth)billingMonth=saved.billingMonth;
+    if(saved.billingYear)billingYear=saved.billingYear;
+    updateMonthYearUI();
+    let count=0;
+    for(const [rig,data] of Object.entries(saved.rigs)){
+      const rigNum=parseInt(rig);
+      if(!RIGS.includes(rigNum))continue;
+      rigStore[rigNum]={meta:data.meta||{},rows:data.rows||[],files:data.files||['localStorage']};
+      count++;
+    }
+    if(count>0){
+      buildRigList();updateStats();
+      log(`Restored ${count} rigs from browser storage (saved ${saved.savedAt?new Date(saved.savedAt).toLocaleString():'unknown'})`,'ok');
+      return true;
+    }
+  }catch(e){log('Auto-load failed: '+e.message,'err');}
+  return false;
+}
+function clearStorage(){
+  localStorage.removeItem(STORAGE_KEY);
+  log('Browser storage cleared','info');
+}
+
+// ============================================
+// DRAG & DROP
+// ============================================
+function setupDrop(){
+  const zone=document.getElementById('dropZone');
+  const input=document.getElementById('fileInput');
+  zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});
+  zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));
+  zone.addEventListener('drop',async e=>{e.preventDefault();zone.classList.remove('dragover');await handleFiles(e.dataTransfer.files);});
+  input.addEventListener('change',async e=>{await handleFiles(e.target.files);input.value='';});
+  document.body.addEventListener('dragover',e=>e.preventDefault());
+  document.body.addEventListener('drop',e=>e.preventDefault());
+}
+
+// ============================================
+// INIT
+// ============================================
+updateMonthYearUI();
+buildRigList();
+setupDrop();
+setStep(1);
+log('Ready. Drop a file to start.','info');
+// Try to restore from localStorage first
+if(!autoLoad()){
+  log('No saved data in browser storage','info');
+}
+
+// Auto-load existing consolidated data if available
+// User can also drop MARCH_2026_ALL_RIGS.xlsx to preload
+async function loadConsolidated(buf){
+  log('Loading consolidated data...','info');
+  const wb=XLSX.read(buf,{type:'array',cellDates:true,raw:true});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const data=XLSX.utils.sheet_to_json(ws,{defval:null});
+  let count=0;
+  for(const row of data){
+    const rig=parseInt(row.Rig||row.rig);
+    if(!rig||!RIGS.includes(rig))continue;
+    if(!rigStore[rig])rigStore[rig]={meta:{customer:'',well:'',contract:'',po:''},rows:[],files:['consolidated']};
+    rigStore[rig].meta.customer=safeStr(row.Customer||row.customer)||RIG_CUST[rig]||'';
+    if(row.Well||row.well)rigStore[rig].meta.well=safeStr(row.Well||row.well);
+    if(row['Contract No'])rigStore[rig].meta.contract=safeStr(row['Contract No']);
+    if(row['P.O'])rigStore[rig].meta.po=safeStr(row['P.O']);
+    const dateStr=toDateStr(row.Date||row.date);
+    if(!dateStr)continue;
+    // Only accept dates matching the selected billing period
+    const expectedSuffix=`-${getBillingMonthName()}-${billingYear}`;
+    if(!dateStr.endsWith(expectedSuffix))continue;
+    // Check dedup
+    if(rigStore[rig].rows.some(r=>r.date===dateStr))continue;
+    rigStore[rig].rows.push({
+      date:dateStr,
+      operating:safeNum(row.Operating||row.operating),
+      reduced:safeNum(row.Reduced||row.reduced),
+      breakdown:safeNum(row.Breakdown||row.breakdown),
+      special:safeNum(row.Special||row.special),
+      force_maj:safeNum(row['Force Maj']||row.force_maj),
+      zero_rate:safeNum(row['Zero Rate']||row.zero_rate),
+      standby:safeNum(row.Standby||row.standby),
+      repair:safeNum(row.Repair||row.repair),
+      rig_move:safeNum(row['Rig Move']||row.rig_move),
+      total_hrs:safeNum(row['Total Hrs']||row.total_hrs),
+      obm_oper:safeNum(row['OBM Oper']||row.obm_oper),
+      obm_red:safeNum(row['OBM Red']||row.obm_red),
+      obm_bd:safeNum(row['OBM BD']||row.obm_bd),
+      obm_spe:safeNum(row['OBM Spe']||row.obm_spe),
+      obm_zero:safeNum(row['OBM Zero']||row.obm_zero),
+      operation:safeStr(row.Operation||row.operation),
+      total_hrs_repair:safeNum(row['Total Hours Repair']||row.total_hrs_repair),
+      remarks:safeStr(row.Remarks||row.remarks),
+    });
+    count++;
+  }
+  // Sort each rig's rows
+  for(const rig of RIGS){
+    if(rigStore[rig])rigStore[rig].rows.sort((a,b)=>{const da=parseDate(a.date),db=parseDate(b.date);return(da||0)-(db||0);});
+  }
+  log(`Loaded ${count} rows from consolidated file`,'ok');
+  buildRigList();
+  updateStats();
+}
+
+// Try to auto-fetch the existing consolidated file
+const conFileName=`${getBillingMonthName().toUpperCase()}_${billingYear}_ALL_RIGS.xlsx`;
+fetch(conFileName).then(r=>{if(r.ok)return r.arrayBuffer();throw new Error('not found')}).then(buf=>loadConsolidated(buf)).catch(()=>{
+  // Also try the old hardcoded name
+  fetch('MARCH_2026_ALL_RIGS.xlsx').then(r=>{if(r.ok)return r.arrayBuffer();throw new Error('not found')}).then(buf=>loadConsolidated(buf)).catch(()=>log('No existing consolidated file found — drop files to start','info'));
+});
+
+// ============================================
+// INTEGRATED EXECUTIVE SUMMARY + SHARED STATE
+// ============================================
+const SUMMARY_CHARTS = {};
+function showAppView(view){const extraction=document.getElementById('extractionView');const summary=document.getElementById('summaryView');const tabExtraction=document.getElementById('tabExtraction');const tabSummary=document.getElementById('tabSummary');if(view==='summary'){extraction.style.display='none';summary.style.display='block';tabExtraction.classList.remove('active');tabSummary.classList.add('active');renderExecutiveSummary();}else{extraction.style.display='block';summary.style.display='none';tabSummary.classList.remove('active');tabExtraction.classList.add('active');}}
+function fmtNum(n,d=0){n=safeNum(n);return n.toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d});}
+function normalizeExtractedData(){const records=[];for(const rig of RIGS){const store=rigStore[rig];if(!store||!store.rows||!store.rows.length)continue;const meta=store.meta||{};for(const row of store.rows){const normalized={rig,customer:meta.customer||RIG_CUST[rig]||'',well:meta.well||'',contract:meta.contract||'',po:meta.po||'',date:row.date,operating:safeNum(row.operating),reduced:safeNum(row.reduced),breakdown:safeNum(row.breakdown),special:safeNum(row.special),force_maj:safeNum(row.force_maj),zero_rate:safeNum(row.zero_rate),standby:safeNum(row.standby),repair:safeNum(row.repair),rig_move:safeNum(row.rig_move),obm_oper:safeNum(row.obm_oper),operation:safeStr(row.operation),remarks:safeStr(row.remarks)};const calculated=HR_KEYS.reduce((sum,key)=>sum+safeNum(normalized[key]),0);normalized.total_hrs=safeNum(row.total_hrs)||calculated;normalized.day=parseDate(normalized.date)?.getDate()||null;normalized.qc_status=normalized.total_hrs>=23.5?'Complete':normalized.total_hrs>0?'Partial':'Missing';normalized.missing_hrs=Math.max(0,24-normalized.total_hrs);records.push(normalized);}}records.sort((a,b)=>(a.rig-b.rig)||((parseDate(a.date)||0)-(parseDate(b.date)||0)));return records;}
+function generateExecutiveSummary(){const records=normalizeExtractedData();const daysInMonth=getDaysInMonth();const activeRigs=[...new Set(records.map(r=>r.rig))];const customers=[...new Set(records.map(r=>r.customer).filter(Boolean))];const totals={operating:0,reduced:0,breakdown:0,special:0,force_maj:0,zero_rate:0,standby:0,repair:0,rig_move:0,total_hrs:0};for(const r of records){for(const k of Object.keys(totals))totals[k]+=safeNum(r[k]);}const rigRows=[];const daily=Array.from({length:daysInMonth},(_,i)=>({day:i+1,submitted:0,expected:0,operating:0,missing_hrs:0,rigs:0}));const byCustomer={};for(const rig of RIGS){const store=rigStore[rig];if(!store||!store.rows||!store.rows.length)continue;const customer=(store.meta&&store.meta.customer)||RIG_CUST[rig]||'';const tl=buildTimeline(store);let total=0,operating=0,reduced=0,breakdown=0;for(const row of store.rows){total+=safeNum(row.total_hrs)||HR_KEYS.reduce((s,k)=>s+safeNum(row[k]),0);operating+=safeNum(row.operating);reduced+=safeNum(row.reduced);breakdown+=safeNum(row.breakdown);const d=parseDate(row.date)?.getDate();if(d&&daily[d-1]){const rowTotal=safeNum(row.total_hrs)||HR_KEYS.reduce((s,k)=>s+safeNum(row[k]),0);daily[d-1].submitted+=rowTotal;daily[d-1].operating+=safeNum(row.operating);daily[d-1].rigs+=1;}}const expected=daysInMonth*24;const missingHrs=Math.max(0,expected-total);rigRows.push({rig,customer,days:store.rows.length,total,operating,reduced,breakdown,missingHrs,missingDays:tl.missingDays,incompleteDays:tl.incompleteDays,status:missingHrs<=0.5?'Complete':tl.missingDays>0?'Missing Days':'Partial'});if(!byCustomer[customer])byCustomer[customer]={customer,rigs:new Set(),operating:0,reduced:0,breakdown:0,total:0,missingHrs:0};byCustomer[customer].rigs.add(rig);byCustomer[customer].operating+=operating;byCustomer[customer].reduced+=reduced;byCustomer[customer].breakdown+=breakdown;byCustomer[customer].total+=total;byCustomer[customer].missingHrs+=missingHrs;}for(const d of daily){d.expected=activeRigs.length*24;d.missing_hrs=Math.max(0,d.expected-d.submitted);}const customerRows=Object.values(byCustomer).map(c=>({...c,rigs:c.rigs.size})).sort((a,b)=>b.total-a.total);const expectedHours=activeRigs.length*daysInMonth*24;const missingHrs=rigRows.reduce((s,r)=>s+r.missingHrs,0);return {records,daysInMonth,activeRigs,customers,totals,rigRows:rigRows.sort((a,b)=>a.rig-b.rig),daily,customerRows,expectedHours,missingHrs};}
+function setKpi(id,value){const el=document.getElementById(id);if(el)el.textContent=value;}function destroyChart(id){if(SUMMARY_CHARTS[id]){SUMMARY_CHARTS[id].destroy();delete SUMMARY_CHARTS[id];}}function makeChart(id,config){const canvas=document.getElementById(id);if(!canvas||typeof Chart==='undefined')return;destroyChart(id);SUMMARY_CHARTS[id]=new Chart(canvas,config);}
+function renderExecutiveSummary(){const empty=document.getElementById('summaryEmpty');const content=document.getElementById('summaryContent');if(!empty||!content)return;const model=generateExecutiveSummary();const hasData=model.records.length>0;empty.style.display=hasData?'none':'block';content.style.display=hasData?'block':'none';document.getElementById('summarySubtitle').textContent=`${getBillingMonthName()} ${billingYear} billing extraction QC — live from uploaded PDF/Excel records`;if(!hasData)return;const t=model.totals;const util=model.expectedHours?((t.operating/model.expectedHours)*100):0;setKpi('kpiActiveRigs',model.activeRigs.length);setKpi('kpiCustomers',`${model.customers.length} customers`);setKpi('kpiSubmittedDays',fmtNum(model.records.length));setKpi('kpiExpectedDays',`${fmtNum(model.activeRigs.length*model.daysInMonth)} expected rig-days`);setKpi('kpiOperating',fmtNum(t.operating));setKpi('kpiUtil',`${util.toFixed(1)}% of expected hours`);setKpi('kpiReduced',fmtNum(t.reduced));setKpi('kpiReducedPct',`${t.total_hrs?(t.reduced/t.total_hrs*100).toFixed(1):0}% of total`);setKpi('kpiMissingHrs',fmtNum(model.missingHrs));const missingDays=model.rigRows.reduce((s,r)=>s+r.missingDays,0);const incompleteDays=model.rigRows.reduce((s,r)=>s+r.incompleteDays,0);setKpi('kpiMissingDays',`${missingDays} missing / ${incompleteDays} partial days`);setKpi('kpiTotalBilled',fmtNum(t.total_hrs));renderSummaryTables(model);renderSummaryHeatmap(model);renderSummaryCharts(model);}
+function renderSummaryTables(model){const rigBody=document.getElementById('summaryRigTable');rigBody.innerHTML=model.rigRows.map(r=>{const cls=r.status==='Complete'?'qc-ok':(r.status==='Partial'?'qc-warn':'qc-bad');return `<tr><td><strong>${r.rig}</strong></td><td>${r.customer}</td><td>${r.days}/${model.daysInMonth}</td><td class="num">${fmtNum(r.total,1)}</td><td class="num" style="color:${r.missingHrs>0?'var(--red)':'var(--green)'}">${fmtNum(r.missingHrs,1)}</td><td><span class="qc-badge ${cls}">${r.status}</span></td></tr>`;}).join('');const custBody=document.getElementById('summaryCustomerTable');custBody.innerHTML=model.customerRows.map(c=>`<tr><td><strong>${c.customer}</strong></td><td class="num">${c.rigs}</td><td class="num">${fmtNum(c.operating,1)}</td><td class="num">${fmtNum(c.total,1)}</td><td class="num" style="color:${c.missingHrs>0?'var(--red)':'var(--green)'}">${fmtNum(c.missingHrs,1)}</td></tr>`).join('');const recBody=document.getElementById('summaryRecordsTable');const rows=model.records.slice(0,1000);recBody.innerHTML=rows.map(r=>{const cls=r.qc_status==='Complete'?'qc-ok':(r.qc_status==='Partial'?'qc-warn':'qc-bad');return `<tr><td>${r.rig}</td><td>${r.customer}</td><td>${r.well||''}</td><td>${r.date}</td><td class="num">${fmtNum(r.operating,1)}</td><td class="num">${fmtNum(r.reduced,1)}</td><td class="num">${fmtNum(r.breakdown,1)}</td><td class="num">${fmtNum(r.rig_move,1)}</td><td class="num">${fmtNum(r.total_hrs,1)}</td><td><span class="qc-badge ${cls}">${r.qc_status}${r.missing_hrs>0?` -${fmtNum(r.missing_hrs,1)}h`:''}</span></td></tr>`;}).join('')+(model.records.length>1000?`<tr><td colspan="10" style="text-align:center;color:var(--text3)">Showing first 1,000 of ${model.records.length} records</td></tr>`:'');}
+function renderSummaryHeatmap(model){const grid=document.getElementById('summaryHeatmap');grid.style.setProperty('--days',model.daysInMonth);let html='<div class="summary-heat-label" style="font-weight:800">Rig</div>';for(let d=1;d<=model.daysInMonth;d++)html+=`<div class="summary-day-head">${d}</div>`;for(const rig of RIGS){const store=rigStore[rig];if(!store||!store.rows||!store.rows.length)continue;html+=`<div class="summary-heat-label"><strong>${rig}</strong></div>`;const map={};for(const row of store.rows){const d=parseDate(row.date)?.getDate();if(d)map[d]=safeNum(row.total_hrs)||HR_KEYS.reduce((s,k)=>s+safeNum(row[k]),0);}for(let d=1;d<=model.daysInMonth;d++){const total=map[d];let cls='missing',label='Missing 24h';if(total===undefined){cls='missing';}else if(total>=23.5){cls='full';label=`${fmtNum(total,1)}h complete`;}else if(total>0){cls='partial';label=`${fmtNum(total,1)}h, missing ${fmtNum(24-total,1)}h`;}else{cls='empty';label='0h submitted';}html+=`<div class="summary-heat-cell ${cls}" title="Rig ${rig} Day ${d}: ${label}">${total!==undefined&&total>0?Math.round(total):''}</div>`;}}grid.innerHTML=html;}
+function renderSummaryCharts(model){const gridColor='rgba(148,163,184,.18)';const tickColor='#94a3b8';const chartDefaults={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tickColor}}},scales:{x:{ticks:{color:tickColor},grid:{color:gridColor}},y:{ticks:{color:tickColor},grid:{color:gridColor},beginAtZero:true}}};makeChart('summaryHoursPie',{type:'doughnut',data:{labels:['Operating','Reduced','Breakdown','Rig Move','Zero Rate','Other'],datasets:[{data:[model.totals.operating,model.totals.reduced,model.totals.breakdown,model.totals.rig_move,model.totals.zero_rate,model.totals.special+model.totals.force_maj+model.totals.standby+model.totals.repair],backgroundColor:['#10b981','#f59e0b','#ef4444','#8b5cf6','#64748b','#06b6d4']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:tickColor}}}}});makeChart('summaryCustomerBar',{type:'bar',data:{labels:model.customerRows.map(c=>c.customer),datasets:[{label:'Operating',data:model.customerRows.map(c=>c.operating),backgroundColor:'#10b981'},{label:'Reduced',data:model.customerRows.map(c=>c.reduced),backgroundColor:'#f59e0b'},{label:'Breakdown',data:model.customerRows.map(c=>c.breakdown),backgroundColor:'#ef4444'}]},options:{...chartDefaults,scales:{x:{stacked:true,ticks:{color:tickColor},grid:{color:gridColor}},y:{stacked:true,ticks:{color:tickColor},grid:{color:gridColor},beginAtZero:true}}}});makeChart('summaryDailyLine',{type:'line',data:{labels:model.daily.map(d=>d.day),datasets:[{label:'Submitted Hours',data:model.daily.map(d=>d.submitted),borderColor:'#06b6d4',backgroundColor:'rgba(6,182,212,.15)',tension:.25,fill:true},{label:'Expected Hours',data:model.daily.map(d=>d.expected),borderColor:'#64748b',borderDash:[4,4],tension:0}]},options:chartDefaults});}
+
+// ============================================
+// ENHANCEMENT PACK: FULL-MONTH QC, EXCEPTIONS, JSON, CONFIDENCE
+// ============================================
+function getRigMeta(rig){
+  const store=rigStore[rig]||{};
+  return {
+    customer:(store.meta&&store.meta.customer)||RIG_CUST[rig]||'',
+    well:(store.meta&&store.meta.well)||'',
+    contract:(store.meta&&store.meta.contract)||'',
+    po:(store.meta&&store.meta.po)||''
+  };
+}
+function rowTotal(row){return safeNum(row.total_hrs)||HR_KEYS.reduce((s,k)=>s+safeNum(row[k]),0);}
+function dateForDay(day){return `${String(day).padStart(2,'0')}-${getBillingMonthName()}-${billingYear}`;}
+function issueAction(issue){
+  if(issue==='Missing Full Day')return 'Request missing daily submission';
+  if(issue==='Partial Submission')return 'Verify sheet and complete missing hours';
+  if(issue==='Over 24 Hours')return 'Check duplicate or wrong hour mapping';
+  if(issue==='Duplicate Date')return 'Review duplicate entries and keep final approved source';
+  if(issue==='Invalid Date')return 'Correct date/month/year before billing';
+  return 'Review';
+}
+function getDayMap(store){
+  const map={}; const duplicates=[]; const invalid=[];
+  if(!store||!store.rows)return {map,duplicates,invalid};
+  for(const row of store.rows){
+    const d=parseDate(row.date);
+    if(!d||d.getFullYear()!==billingYear||(d.getMonth()+1)!==billingMonth){invalid.push(row);continue;}
+    const day=d.getDate();
+    if(!map[day])map[day]=[];
+    map[day].push(row);
+  }
+  for(const [day,rows] of Object.entries(map)){if(rows.length>1)duplicates.push({day:parseInt(day),rows});}
+  return {map,duplicates,invalid};
+}
+function buildQCModel(){
+  const days=getDaysInMonth();
+  const rigSummaries=[]; const exceptions=[]; const daily=Array.from({length:days},(_,i)=>({day:i+1,expected:RIGS.length*24,submitted:0,operating:0,missing_hrs:0,completeRigs:0,issueRigs:0}));
+  let totals={operating:0,reduced:0,breakdown:0,special:0,force_maj:0,zero_rate:0,standby:0,repair:0,rig_move:0,total_hrs:0};
+  const customerAgg={};
+  for(const rig of RIGS){
+    const store=rigStore[rig]||{meta:{customer:RIG_CUST[rig]},rows:[],files:[]};
+    const meta=getRigMeta(rig); const {map,duplicates,invalid}=getDayMap(store);
+    let submitted=0,operating=0,reduced=0,breakdown=0,missingHrs=0,missingDays=0,partialDays=0,overDays=0,completeDays=0,submittedDays=0;
+    for(const row of (store.rows||[])){
+      for(const k of Object.keys(totals)){ if(k==='total_hrs')continue; totals[k]+=safeNum(row[k]); }
+      totals.total_hrs+=rowTotal(row);
+    }
+    for(const inv of invalid){
+      exceptions.push({rig,customer:meta.customer,date:inv.date||'',submitted:rowTotal(inv),missing:24,issue:'Invalid Date',action:issueAction('Invalid Date'),severity:'critical'});
+    }
+    for(const dup of duplicates){
+      const total=dup.rows.reduce((s,r)=>s+rowTotal(r),0);
+      exceptions.push({rig,customer:meta.customer,date:dateForDay(dup.day),submitted:total,missing:Math.max(0,24-total),issue:'Duplicate Date',action:issueAction('Duplicate Date'),severity:'warning'});
+    }
+    for(let d=1;d<=days;d++){
+      const rows=map[d]||[];
+      const total=rows.reduce((s,r)=>s+rowTotal(r),0);
+      const op=rows.reduce((s,r)=>s+safeNum(r.operating),0);
+      submitted+=total; operating+=op; reduced+=rows.reduce((s,r)=>s+safeNum(r.reduced),0); breakdown+=rows.reduce((s,r)=>s+safeNum(r.breakdown),0);
+      daily[d-1].submitted+=total; daily[d-1].operating+=op;
+      if(rows.length>0)submittedDays++;
+      if(total>=23.5&&total<=24.5){completeDays++; daily[d-1].completeRigs++;}
+      else if(total>24.5){overDays++; daily[d-1].issueRigs++; exceptions.push({rig,customer:meta.customer,date:dateForDay(d),submitted:total,missing:0,issue:'Over 24 Hours',action:issueAction('Over 24 Hours'),severity:'critical'});}
+      else if(total>0){const gap=24-total; partialDays++; missingHrs+=gap; daily[d-1].issueRigs++; exceptions.push({rig,customer:meta.customer,date:dateForDay(d),submitted:total,missing:gap,issue:'Partial Submission',action:issueAction('Partial Submission'),severity:'warning'});}
+      else{missingDays++; missingHrs+=24; daily[d-1].issueRigs++; exceptions.push({rig,customer:meta.customer,date:dateForDay(d),submitted:0,missing:24,issue:'Missing Full Day',action:issueAction('Missing Full Day'),severity:'critical'});}
+    }
+    const expected=days*24; const completion=expected?Math.max(0,Math.min(100,(submitted/expected)*100)):0;
+    const status=(missingDays===0&&partialDays===0&&overDays===0)?'Complete':(missingDays>0?'Missing Days':(overDays>0?'Over 24h':'Partial'));
+    rigSummaries.push({rig,customer:meta.customer,well:meta.well,submittedDays,expectedDays:days,total:submitted,operating,reduced,breakdown,missingHrs,missingDays,partialDays,overDays,completeDays,completion,status,files:(store.files||[]).length});
+    if(!customerAgg[meta.customer])customerAgg[meta.customer]={customer:meta.customer,rigs:new Set(),operating:0,reduced:0,breakdown:0,total:0,missingHrs:0,exceptions:0};
+    customerAgg[meta.customer].rigs.add(rig); customerAgg[meta.customer].operating+=operating; customerAgg[meta.customer].reduced+=reduced; customerAgg[meta.customer].breakdown+=breakdown; customerAgg[meta.customer].total+=submitted; customerAgg[meta.customer].missingHrs+=missingHrs;
+  }
+  for(const ex of exceptions){ if(customerAgg[ex.customer])customerAgg[ex.customer].exceptions++; }
+  for(const d of daily){d.missing_hrs=Math.max(0,d.expected-d.submitted);}
+  const records=normalizeExtractedData();
+  const expectedHours=RIGS.length*days*24;
+  const submittedHours=rigSummaries.reduce((s,r)=>s+r.total,0);
+  const missingHrs=rigSummaries.reduce((s,r)=>s+r.missingHrs,0);
+  const fullRigs=rigSummaries.filter(r=>r.status==='Complete').length;
+  const reviewRigs=rigSummaries.length-fullRigs;
+  const criticalExceptions=exceptions.filter(e=>e.severity==='critical').length;
+  const customerRows=Object.values(customerAgg).map(c=>({...c,rigs:c.rigs.size})).sort((a,b)=>b.total-a.total);
+  return {daysInMonth:days,rigSummaries,exceptions,daily,records,totals,expectedHours,submittedHours,missingHrs,fullRigs,reviewRigs,criticalExceptions,customerRows,customers:customerRows.map(c=>c.customer).filter(Boolean),activeRigs:RIGS,completion:expectedHours?Math.max(0,Math.min(100,(submittedHours/expectedHours)*100)):0};
+}
+function buildTimeline(store){
+  const {map}=getDayMap(store||{rows:[]});
+  let html='<div class="timeline-31">'; let missingHrs=0,missingDays=0,incompleteDays=0,overDays=0;
+  for(let d=1;d<=getDaysInMonth();d++){
+    const rows=map[d]||[]; const total=rows.reduce((s,r)=>s+rowTotal(r),0); const operating=rows.reduce((s,r)=>s+safeNum(r.operating),0);
+    if(total>=23.5&&total<=24.5){html+=`<div class="day-cell full" title="${getBillingMonthName()} ${d}: ${total.toFixed(1)}h total, ${operating.toFixed(1)}h oper"></div>`;}
+    else if(total>24.5){html+=`<div class="day-cell partial-day" style="background:var(--purple)" title="${getBillingMonthName()} ${d}: ${total.toFixed(1)}h total — OVER 24h, review duplicate/mapping"></div>`;overDays++;}
+    else if(total>0){const gap=24-total;html+=`<div class="day-cell partial-day" title="${getBillingMonthName()} ${d}: ${total.toFixed(1)}h total — ${gap.toFixed(1)}h missing"></div>`;missingHrs+=gap;incompleteDays++;}
+    else{html+=`<div class="day-cell missing" title="${getBillingMonthName()} ${d}: NO DATA — 24 hrs missing"></div>`;missingHrs+=24;missingDays++;}
+  }
+  html+='</div>'; return {html,missingDays,incompleteDays,overDays,missingHrs};
+}
+function updateFleetOverview(){
+  const panel=document.getElementById('fleetOverview'); if(!panel)return; panel.style.display='';
+  const grid=document.getElementById('fleetGrid'); grid.innerHTML='';
+  const qc=buildQCModel();
+  for(const r of qc.rigSummaries){
+    let bg='rgba(239,68,68,.15)', color='var(--red)';
+    if(r.status==='Complete'){bg='rgba(16,185,129,.2)';color='var(--green)';}
+    else if(r.submittedDays>0){bg='rgba(245,158,11,.15)';color='var(--orange)';}
+    const cell=document.createElement('div'); cell.style.cssText=`background:${bg};border-radius:3px;padding:2px 4px;text-align:center;cursor:pointer;flex:1;min-width:0`;
+    cell.innerHTML=`<div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.65rem;color:${color}">${r.rig}</div><div style="font-size:.45rem;color:var(--text3)">${r.submittedDays}/${qc.daysInMonth}</div>`;
+    cell.title=`Rig ${r.rig}: ${r.status}; ${r.missingDays} missing, ${r.partialDays} partial, ${r.missingHrs.toFixed(1)} missing hrs`; cell.onclick=()=>selectRig(r.rig); grid.appendChild(cell);
+  }
+  const summary=document.getElementById('fleetSummary'); if(summary)summary.textContent=`${qc.fullRigs}/${RIGS.length} complete · ${qc.reviewRigs} need review · ${qc.missingHrs.toFixed(0)}h missing`;
+  const miss=document.getElementById('fleetMissing'); if(miss){miss.style.display='block'; miss.innerHTML=qc.reviewRigs?qc.rigSummaries.filter(r=>r.status!=='Complete').slice(0,10).map(r=>`<span style="color:var(--orange)">Rig ${r.rig}: ${r.missingDays} missing + ${r.partialDays} partial + ${r.overDays} over (${r.missingHrs.toFixed(0)}h)</span>`).join(' · '):'<span style="color:var(--green)">All rigs complete for the full month.</span>';}
+}
+function computeExtractionConfidence(rigNum,map,rows){
+  let score=100; const issues=[];
+  if(!rigNum){score-=30; issues.push('rig not detected');}
+  if(currentHeaderRow<0){score-=25; issues.push('header row not detected');}
+  if(map.date===undefined){score-=25; issues.push('date column missing');}
+  if(map.operating===undefined&&map.total_hrs===undefined){score-=15; issues.push('no operating/total hour column mapped');}
+  if(!rows||rows.length===0){score-=30; issues.push('no daily rows extracted');}
+  if(rows&&rows.length>getDaysInMonth()){score-=15; issues.push('more rows than month days');}
+  const over=(rows||[]).filter(r=>rowTotal(r)>24.5).length; if(over){score-=Math.min(20,over*5); issues.push(`${over} over-24h day(s)`);}
+  const invalid=(rows||[]).filter(r=>!parseDate(r.date)).length; if(invalid){score-=Math.min(25,invalid*5); issues.push(`${invalid} invalid date(s)`);}
+  score=Math.max(0,Math.min(100,Math.round(score)));
+  const status=score>=90?'Auto Accepted':score>=70?'Accepted with Warning':'Manual Review Required';
+  return {score,status,issues};
+}
+function generateExecutiveSummary(){
+  const qc=buildQCModel();
+  return {records:qc.records,daysInMonth:qc.daysInMonth,activeRigs:qc.activeRigs,customers:qc.customers,totals:qc.totals,rigRows:qc.rigSummaries.map(r=>({rig:r.rig,customer:r.customer,days:r.submittedDays,total:r.total,operating:r.operating,reduced:r.reduced,breakdown:r.breakdown,missingHrs:r.missingHrs,missingDays:r.missingDays,incompleteDays:r.partialDays,overDays:r.overDays,status:r.status,completion:r.completion})),daily:qc.daily,customerRows:qc.customerRows,expectedHours:qc.expectedHours,missingHrs:qc.missingHrs,qc};
+}
+function renderExecutiveSummary(){
+  const empty=document.getElementById('summaryEmpty'); const content=document.getElementById('summaryContent'); if(!empty||!content)return;
+  const model=generateExecutiveSummary(); const hasData=model.records.length>0; empty.style.display=hasData?'none':'block'; content.style.display=hasData?'block':'none';
+  const sub=document.getElementById('summarySubtitle'); if(sub)sub.textContent=`${getBillingMonthName()} ${billingYear} billing extraction QC — full-month rule for all ${RIGS.length} rigs`;
+  if(!hasData)return;
+  const t=model.totals; const util=model.expectedHours?((t.operating/model.expectedHours)*100):0;
+  setKpi('kpiActiveRigs',RIGS.length); setKpi('kpiCustomers',`${model.customers.length} customers`); setKpi('kpiSubmittedDays',fmtNum(model.records.length)); setKpi('kpiExpectedDays',`${fmtNum(RIGS.length*model.daysInMonth)} expected rig-days`); setKpi('kpiOperating',fmtNum(t.operating)); setKpi('kpiUtil',`${util.toFixed(1)}% of expected fleet hours`); setKpi('kpiReduced',fmtNum(t.reduced)); setKpi('kpiReducedPct',`${t.total_hrs?(t.reduced/t.total_hrs*100).toFixed(1):0}% of submitted`); setKpi('kpiMissingHrs',fmtNum(model.qc.missingHrs));
+  const missingDays=model.qc.rigSummaries.reduce((s,r)=>s+r.missingDays,0); const partialDays=model.qc.rigSummaries.reduce((s,r)=>s+r.partialDays,0); const overDays=model.qc.rigSummaries.reduce((s,r)=>s+r.overDays,0);
+  setKpi('kpiMissingDays',`${missingDays} missing / ${partialDays} partial / ${overDays} over`); setKpi('kpiTotalBilled',fmtNum(t.total_hrs));
+  setKpi('kpiQCCompletion',`${model.qc.completion.toFixed(1)}%`); setKpi('kpiQCCompletionNote',`${fmtNum(model.qc.submittedHours)} / ${fmtNum(model.qc.expectedHours)} hrs submitted`); setKpi('kpiFullRigs',`${model.qc.fullRigs}/${RIGS.length}`); setKpi('kpiReviewRigs',model.qc.reviewRigs); setKpi('kpiCriticalExceptions',model.qc.criticalExceptions);
+  renderSummaryTables(model); renderSummaryHeatmap(model); renderSummaryCharts(model);
+}
+function renderSummaryTables(model){
+  const rigBody=document.getElementById('summaryRigTable'); if(rigBody)rigBody.innerHTML=model.rigRows.map(r=>{const cls=r.status==='Complete'?'qc-ok':(r.status==='Partial'?'qc-warn':'qc-bad');return `<tr><td><strong>${r.rig}</strong></td><td>${r.customer}</td><td>${r.days}/${model.daysInMonth}</td><td class="num">${fmtNum(r.total,1)}</td><td class="num" style="color:${r.missingHrs>0?'var(--red)':'var(--green)'}">${fmtNum(r.missingHrs,1)}</td><td><span class="qc-badge ${cls}">${r.status}</span></td></tr>`;}).join('');
+  const custBody=document.getElementById('summaryCustomerTable'); if(custBody)custBody.innerHTML=model.customerRows.map(c=>`<tr><td><strong>${c.customer}</strong></td><td class="num">${c.rigs}</td><td class="num">${fmtNum(c.operating,1)}</td><td class="num">${fmtNum(c.total,1)}</td><td class="num" style="color:${c.missingHrs>0?'var(--red)':'var(--green)'}">${fmtNum(c.missingHrs,1)}</td></tr>`).join('');
+  const exBody=document.getElementById('summaryExceptionTable'); if(exBody){const ex=model.qc.exceptions.slice(0,1200); exBody.innerHTML=ex.map(e=>`<tr class="${e.severity==='critical'?'bad-row':'conf-row'}"><td>${e.rig}</td><td>${e.customer}</td><td>${e.date}</td><td class="num">${fmtNum(e.submitted,1)}</td><td class="num">${fmtNum(e.missing,1)}</td><td><span class="qc-badge ${e.severity==='critical'?'qc-bad':'qc-warn'}">${e.issue}</span></td><td>${e.action}</td></tr>`).join('')+(model.qc.exceptions.length>1200?`<tr><td colspan="7" style="text-align:center;color:var(--text3)">Showing first 1,200 of ${model.qc.exceptions.length} exceptions</td></tr>`:'');}
+  const recBody=document.getElementById('summaryRecordsTable'); if(recBody){const rows=model.records.slice(0,1000); recBody.innerHTML=rows.map(r=>{let cls='qc-bad',label='Missing'; if(r.total_hrs>24.5){cls='qc-bad';label='Over 24h';}else if(r.qc_status==='Complete'){cls='qc-ok';label='Complete';}else if(r.qc_status==='Partial'){cls='qc-warn';label=`Partial -${fmtNum(r.missing_hrs,1)}h`;}return `<tr><td>${r.rig}</td><td>${r.customer}</td><td>${r.well||''}</td><td>${r.date}</td><td class="num">${fmtNum(r.operating,1)}</td><td class="num">${fmtNum(r.reduced,1)}</td><td class="num">${fmtNum(r.breakdown,1)}</td><td class="num">${fmtNum(r.rig_move,1)}</td><td class="num">${fmtNum(r.total_hrs,1)}</td><td><span class="qc-badge ${cls}">${label}</span></td></tr>`;}).join('')+(model.records.length>1000?`<tr><td colspan="10" style="text-align:center;color:var(--text3)">Showing first 1,000 of ${model.records.length} records</td></tr>`:'');}
+}
+function renderSummaryHeatmap(model){
+  const grid=document.getElementById('summaryHeatmap'); if(!grid)return; grid.style.setProperty('--days',model.daysInMonth); let html='<div class="summary-heat-label" style="font-weight:800">Rig</div>'; for(let d=1;d<=model.daysInMonth;d++)html+=`<div class="summary-day-head">${d}</div>`;
+  for(const rig of RIGS){const store=rigStore[rig]||{rows:[]}; const {map}=getDayMap(store); html+=`<div class="summary-heat-label"><strong>${rig}</strong></div>`; for(let d=1;d<=model.daysInMonth;d++){const total=(map[d]||[]).reduce((s,r)=>s+rowTotal(r),0); let cls='missing',label='Missing 24h',txt=''; if(total>=23.5&&total<=24.5){cls='full';label=`${fmtNum(total,1)}h complete`;txt=Math.round(total);}else if(total>24.5){cls='partial';label=`${fmtNum(total,1)}h OVER 24h`;txt='!';}else if(total>0){cls='partial';label=`${fmtNum(total,1)}h, missing ${fmtNum(24-total,1)}h`;txt=Math.round(total);}html+=`<div class="summary-heat-cell ${cls}" title="Rig ${rig} Day ${d}: ${label}">${txt}</div>`;}}
+  grid.innerHTML=html;
+}
+function exportExceptionReport(){
+  const qc=buildQCModel(); if(typeof XLSX==='undefined'){alert('XLSX library not loaded');return;}
+  const exRows=qc.exceptions.map(e=>({Rig:e.rig,Customer:e.customer,Date:e.date,'Submitted Hrs':Number(e.submitted.toFixed(2)),'Missing Hrs':Number(e.missing.toFixed(2)),Issue:e.issue,'Action Required':e.action,Severity:e.severity}));
+  const rigRows=qc.rigSummaries.map(r=>({Rig:r.rig,Customer:r.customer,Well:r.well,'Submitted Days':r.submittedDays,'Expected Days':r.expectedDays,'Complete Days':r.completeDays,'Missing Days':r.missingDays,'Partial Days':r.partialDays,'Over 24h Days':r.overDays,'Submitted Hrs':Number(r.total.toFixed(2)),'Missing Hrs':Number(r.missingHrs.toFixed(2)),'Completion %':Number(r.completion.toFixed(2)),Status:r.status}));
+  const dailyRows=qc.daily.map(d=>({Day:d.day,'Expected Hrs':d.expected,'Submitted Hrs':Number(d.submitted.toFixed(2)),'Missing Hrs':Number(d.missing_hrs.toFixed(2)),'Complete Rigs':d.completeRigs,'Issue Rigs':d.issueRigs}));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rigRows),'Rig QC Summary'); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(exRows),'QC Exceptions'); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(dailyRows),'Daily Fleet QC'); XLSX.writeFile(wb,`QC_EXCEPTION_REPORT_${getBillingMonthName().toUpperCase()}_${billingYear}.xlsx`); log(`Exported QC report: ${exRows.length} exceptions`,'ok');
+}
+function exportJSON(){
+  const payload={version:'2.0-qc',exportedAt:new Date().toISOString(),billingMonth,billingYear,rigs:{}};
+  for(const rig of RIGS){if(rigStore[rig]&&rigStore[rig].rows&&rigStore[rig].rows.length){payload.rigs[rig]={meta:rigStore[rig].meta||getRigMeta(rig),rows:rigStore[rig].rows,files:rigStore[rig].files||[]};}}
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`BILLING_STATE_${getBillingMonthName().toUpperCase()}_${billingYear}.json`; a.click(); URL.revokeObjectURL(a.href); log('Exported JSON state','ok');
+}
+function importJSONFile(file){
+  if(!file)return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.billingMonth)billingMonth=data.billingMonth; if(data.billingYear)billingYear=data.billingYear; updateMonthYearUI(); for(const k of Object.keys(rigStore))delete rigStore[k]; const rigs=data.rigs||{}; for(const [rig,val] of Object.entries(rigs)){const r=parseInt(rig); if(RIGS.includes(r))rigStore[r]={meta:val.meta||{customer:RIG_CUST[r]},rows:val.rows||[],files:val.files||['json-import']};} buildRigList();updateStats();autoSave();renderExecutiveSummary();log(`Imported JSON state: ${Object.keys(rigs).length} rigs`,'ok');}catch(e){alert('Invalid JSON file: '+e.message);log('Import JSON failed: '+e.message,'err');}}; reader.readAsText(file);
+}
+function manualSaveSession(){autoSave();alert('Session saved in this browser.');}
+function manualLoadSession(){const ok=autoLoad();renderExecutiveSummary();alert(ok?'Session loaded from browser storage.':'No saved session found.');}
+
+// Wrap showResult once to add confidence strip
+const __originalShowResult=showResult;
+showResult=function(rigNum,cust,well,contract,po,rows){
+  __originalShowResult(rigNum,cust,well,contract,po,rows);
+  const conf=computeExtractionConfidence(rigNum,currentMapping,rows||[]);
+  const warnEl=document.getElementById('resultWarnings');
+  if(warnEl){
+    const color=conf.score>=90?'var(--green)':conf.score>=70?'var(--orange)':'var(--red)';
+    const strip=`<div class="card" style="padding:10px 14px;margin-top:8px;border-color:${color}"><div class="hint" style="font-size:.78rem;color:${color};font-weight:800">Extraction Confidence: ${conf.score}% — ${conf.status}</div><div class="hint" style="font-size:.72rem;color:var(--text2);margin-top:3px">${conf.issues.length?conf.issues.join(' · '):'Rig, header, mapping, dates, and daily rows look acceptable.'}</div></div>`;
+    warnEl.insertAdjacentHTML('afterbegin',strip);
+  }
+};
+
+
+// Advanced conflict handling: PDF / Excel / Merge / Manual choices
+window.__lastConflicts={rigNum:null,conflicts:[]};
+function replaceRigRowFromConflict(rigNum,c,source){
+  if(!rigStore[rigNum])return;
+  const idx=rigStore[rigNum].rows.findIndex(r=>r.date===c.date);
+  let chosen=null, chosenSource='Manual';
+  if(source==='pdf'){
+    if(String(c.newSource||'').includes('PDF')){chosen=c.newRow;chosenSource='PDF';}
+    else if(String(c.existingSource||'').includes('PDF')){chosen=c.existing;chosenSource='PDF';}
+  }else if(source==='excel'){
+    if(String(c.newSource||'').includes('Excel')){chosen=c.newRow;chosenSource='Excel';}
+    else if(String(c.existingSource||'').includes('Excel')){chosen=c.existing;chosenSource='Excel';}
+  }
+  if(chosen&&idx>=0){
+    const clean={...chosen}; clean._source=chosenSource; clean.total_hrs=rowTotal(clean);
+    rigStore[rigNum].rows[idx]=clean;
+  }
+}
+function resolveAllConflicts(rigNum,strategy){
+  const conflicts=(window.__lastConflicts&&window.__lastConflicts.conflicts)||[];
+  if(strategy==='manual'){selectRig(rigNum);return;}
+  if(strategy==='pdf'||strategy==='excel'){
+    for(const c of conflicts)replaceRigRowFromConflict(rigNum,c,strategy);
+    if(rigStore[rigNum])rigStore[rigNum].rows.sort((a,b)=>(parseDate(a.date)||0)-(parseDate(b.date)||0));
+  }
+  // strategy merge keeps the current merged rows
+  autoSave(); buildRigList(); updateStats(); renderExecutiveSummary(); log(`Conflict resolution applied: ${strategy.toUpperCase()} for Rig ${rigNum}`,'ok'); advanceToNext(rigNum);
+}
+showConflicts=function(rigNum,conflicts){
+  window.__lastConflicts={rigNum,conflicts}; setStep(3);
+  let html=`<div style="padding:16px">
+    <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:14px;margin-bottom:16px">
+      <strong style="color:var(--red);font-size:.95rem">Hours Conflict Detected — ${conflicts.length} day(s)</strong>
+      <div style="color:var(--text2);font-size:.82rem;margin-top:4px">Choose how to resolve same-rig/same-date differences. Recommended default: use PDF if it is the signed final billing document.</div>
+    </div>
+    <table class="result-table" style="min-width:auto"><thead><tr><th>Date</th><th>Existing Source</th><th>Existing Hrs</th><th>New Source</th><th>New Hrs</th><th>Diff</th><th>Current Merged</th><th>Recommended</th></tr></thead><tbody>`;
+  for(const c of conflicts){
+    const diff=(safeNum(c.newTotal)-safeNum(c.existingTotal)).toFixed(1); const merged=rigStore[rigNum]?.rows.find(r=>r.date===c.date); const mergedTotal=merged?rowTotal(merged):0;
+    const rec=(String(c.newSource||'').includes('PDF')||String(c.existingSource||'').includes('PDF'))?'Use PDF':'Manual Review';
+    html+=`<tr class="conf-row"><td style="white-space:nowrap">${c.date}</td><td>${c.existingSource||''}</td><td class="num">${fmtNum(c.existingTotal,1)}h</td><td>${c.newSource||''}</td><td class="num">${fmtNum(c.newTotal,1)}h</td><td class="num" style="color:var(--red)">${diff>0?'+':''}${diff}h</td><td class="num" style="font-weight:700;color:var(--cyan)">${fmtNum(mergedTotal,1)}h</td><td>${rec}</td></tr>`;
+  }
+  html+=`</tbody></table><div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+    <button class="btn btn-sm" onclick="resolveAllConflicts(${rigNum},'manual')">Manual Edit</button>
+    <button class="btn btn-sm" onclick="resolveAllConflicts(${rigNum},'excel')">Use Excel</button>
+    <button class="btn btn-sm btn-green" onclick="resolveAllConflicts(${rigNum},'pdf')">Use PDF</button>
+    <button class="btn btn-primary btn-sm" onclick="resolveAllConflicts(${rigNum},'merge')">Keep Current Merge</button>
+  </div></div>`;
+  document.getElementById('resultScroll').innerHTML=html; document.getElementById('resultTitle').textContent=`Rig ${rigNum} — Resolve Conflicts`; document.getElementById('resultWarnings').innerHTML='';
+};
+
+(function installSummaryHooks(){const hookNames=['updateStats','buildRigList','updateFleetOverview','acceptData','acceptAllRemaining','clearAll','loadConsolidated','onMonthYearChange','recalcTotal'];for(const name of hookNames){const original=window[name];if(typeof original==='function'){window[name]=function(...args){const result=original.apply(this,args);setTimeout(renderExecutiveSummary,0);return result;};}}renderExecutiveSummary();})();
+
+</script>
+</body>
+</html>
