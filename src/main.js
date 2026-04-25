@@ -28,6 +28,8 @@ import {
   buildAllRowsData, buildExceptionReportSheets, EXPORT_COL_WIDTHS,
 } from './pipeline/export.js';
 import { parseConsolidatedRows } from './pipeline/consolidatedLoader.js';
+import { shouldSkipFile, detectRigFromFilename } from './pipeline/fileFilter.js';
+import { chooseConflictRow } from './pipeline/conflictResolver.js';
 import {
   ensureRig, getRig, setRigMeta, addFileToRig,
   replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
@@ -210,12 +212,9 @@ async function processNextFile() {
   // daily billing rows. Skip them silently rather than emit a "0 rows" review
   // card. Same for Docusign and pure ticket files. Keep combined files like
   // "RIG204 Feb Billing & Ticket.pdf" — those have real billing rows.
-  const fname = file.name;
-  const isMove = /\bmove\b/i.test(fname);
-  const isDocusign = /docusign/i.test(fname);
-  const isTicketOnly = /\bticket\b/i.test(fname) && !/billing/i.test(fname);
-  if (isMove || isDocusign || isTicketOnly) {
-    log(`  Skipping non-billing file: ${fname}`, 'info');
+  const { skip, reason } = shouldSkipFile(file.name);
+  if (skip) {
+    log(`  Skipping non-billing file: ${file.name} (${reason})`, 'info');
     if (batchMode.active) {
       recordSuccess(batchMode); // count as "handled" so the batch progresses
       renderBatchBanner();
@@ -225,11 +224,7 @@ async function processNextFile() {
   }
 
   const buf = await file.arrayBuffer();
-
-  // Try leading 3 digits first (e.g. "204_March_2026.xlsx"), then "Rig104" /
-  // "RIG 104" anywhere in the name (real-world Abraj billing files).
-  const rigMatch = file.name.match(/^(\d{3})/) || file.name.match(/rig[\s_-]*(\d{3})/i);
-  currentRigNum = rigMatch ? parseInt(rigMatch[1]) : null;
+  currentRigNum = detectRigFromFilename(file.name);
 
   log(`Processing: ${file.name} (${fileQueue.length} remaining in queue)`, 'info');
 
@@ -1107,17 +1102,9 @@ function advanceToNext(rigNum) {
 
 function replaceRigRowFromConflict(rigNum, c, source) {
   if (!getRig(rigStore, rigNum)) return;
-  let chosen = null;
-  let chosenSource = 'Manual';
-  if (source === 'pdf') {
-    if (String(c.newSource || '').includes('PDF')) { chosen = c.newRow; chosenSource = 'PDF'; }
-    else if (String(c.existingSource || '').includes('PDF')) { chosen = c.existing; chosenSource = 'PDF'; }
-  } else if (source === 'excel') {
-    if (String(c.newSource || '').includes('Excel')) { chosen = c.newRow; chosenSource = 'Excel'; }
-    else if (String(c.existingSource || '').includes('Excel')) { chosen = c.existing; chosenSource = 'Excel'; }
-  }
+  const chosen = chooseConflictRow(c, source);
   if (chosen) {
-    const clean = { ...chosen, _source: chosenSource };
+    const clean = { ...chosen.row, _source: chosen.source };
     clean.total_hrs = rowTotal(clean);
     replaceRowByDate(rigStore, rigNum, clean);
   }
