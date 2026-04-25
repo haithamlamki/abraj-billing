@@ -25,6 +25,9 @@ import {
   mergeExtractionSilently as mergeExtractionSilentlyPipeline,
 } from './pipeline/autoProcess.js';
 import {
+  buildAllRowsData, buildExceptionReportSheets, EXPORT_COL_WIDTHS,
+} from './pipeline/export.js';
+import {
   ensureRig, getRig, setRigMeta, addFileToRig,
   replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
   clearRigs, aggregateStats, hasData, updateRigMetaFields,
@@ -33,7 +36,6 @@ import {
   createBatch, startBatch, addToBatch, recordSuccess, recordReview,
   pauseBatch as pauseBatchState, resumeBatch as resumeBatchState,
   finishBatch, resetBatch as resetBatchState, isRunning,
-  batchProgress,
 } from './state/batch.js';
 import {
   ensureReviewQueueContainer, buildReviewCardHTML, renderReviewQueue as renderReviewQueueDOM,
@@ -44,6 +46,12 @@ import {
 } from './views/fleetOverview.js';
 import { renderResult as renderResultDOM } from './views/result.js';
 import { renderPreviewTable as renderPreviewTableDOM } from './views/preview.js';
+import { buildColOptionsHTML, buildMappingItemHTML } from './views/mappingUI.js';
+import {
+  ensureBatchBanner,
+  renderBatchBanner as renderBatchBannerDOM,
+  renderBatchDone as renderBatchDoneDOM,
+} from './views/batchBanner.js';
 import { renderSummary as renderSummaryDOM } from './views/summary.js';
 
 /* global XLSX, pdfjsLib, Chart */
@@ -123,64 +131,12 @@ function onMonthYearChange() {
 // ============================================
 // BATCH BANNER
 // ============================================
-function ensureBatchBanner() {
-  let el = document.getElementById('batchBanner');
-  if (el) return el;
-  el = document.createElement('div');
-  el.id = 'batchBanner';
-  el.style.cssText = 'display:none;margin:0 0 8px;padding:10px 14px;background:linear-gradient(90deg,rgba(6,182,212,.12),rgba(16,185,129,.08));border:1px solid var(--cyan);border-radius:8px;font-size:.8rem;color:var(--text)';
-  const mainPanel = document.getElementById('mainPanel');
-  if (mainPanel) mainPanel.insertBefore(el, mainPanel.firstChild);
-  return el;
-}
-
 function renderBatchBanner() {
-  const el = ensureBatchBanner();
-  if (!batchMode.active) {
-    el.style.display = 'none';
-    return;
-  }
-  el.style.display = '';
-  const { total, processed, autoAccepted, needsReview, paused } = batchMode;
-  const { pct, remaining, etaSec } = batchProgress(batchMode);
-  const etaTxt = remaining === 0 ? '' : ` · ~${etaSec < 60 ? etaSec + 's' : Math.round(etaSec / 60) + 'm'} left`;
-  const action = paused ? '<button class="btn btn-sm" id="batchResume">Resume</button>' : '<button class="btn btn-sm" id="batchPause">Pause</button>';
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <strong style="color:var(--cyan);font-size:.85rem">Batch ${paused ? 'paused' : 'processing'}</strong>
-      <span>${processed} / ${total} files</span>
-      <span style="color:var(--green)">${autoAccepted} auto-accepted</span>
-      <span style="color:${needsReview ? 'var(--orange)' : 'var(--text3)'}">${needsReview} need review</span>
-      <span style="color:var(--text3)">${etaTxt}</span>
-      <div style="margin-left:auto">${action}</div>
-    </div>
-    <div style="margin-top:6px;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden">
-      <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width .2s"></div>
-    </div>
-  `;
-  const pauseBtn = el.querySelector('#batchPause');
-  const resumeBtn = el.querySelector('#batchResume');
-  if (pauseBtn) pauseBtn.addEventListener('click', pauseBatch);
-  if (resumeBtn) resumeBtn.addEventListener('click', resumeBatch);
+  renderBatchBannerDOM(batchMode, { onPause: pauseBatch, onResume: resumeBatch });
 }
 
 function renderBatchDone() {
-  const el = ensureBatchBanner();
-  el.style.display = '';
-  const { total, autoAccepted, needsReview, reviews } = batchMode;
-  const reviewList = reviews.length
-    ? `<ul style="margin:6px 0 0 16px;padding:0;font-size:.74rem;color:var(--text2)">${reviews.map(r => `<li>${r.file} — Rig ${r.rig ?? '?'}: ${r.reason}</li>`).join('')}</ul>`
-    : '';
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <strong style="color:var(--green);font-size:.85rem">Batch done</strong>
-      <span>${total} files · ${autoAccepted} auto-accepted · ${needsReview} need manual review</span>
-      <div style="margin-left:auto"><button class="btn btn-sm" id="batchDismiss">Dismiss</button></div>
-    </div>
-    ${reviewList}
-  `;
-  const btn = el.querySelector('#batchDismiss');
-  if (btn) btn.addEventListener('click', () => { resetBatch(); });
+  renderBatchDoneDOM(batchMode, { onDismiss: resetBatch });
 }
 
 function pauseBatch() {
@@ -863,11 +819,7 @@ function buildMappingUI() {
       const div = document.createElement('div');
       div.className = 'map-item';
       div.id = `map-${tc.key}`;
-      div.innerHTML = `<label>${tc.label}</label>
-        <select id="sel-${tc.key}" data-map-key="${tc.key}">
-          <option value="-1">-- not mapped --</option>
-          ${colOptions}
-        </select>`;
+      div.innerHTML = buildMappingItemHTML(tc, colOptions);
       grid.appendChild(div);
     }
   }
@@ -909,22 +861,10 @@ function getColOptions() {
   if (!currentRawData || currentHeaderRow < 0) return '';
   const data = currentRawSheets[currentSheetName].formatted;
   const useData = data && data.length ? data : currentRawData;
-  const hRow = useData[currentHeaderRow] || [];
-  const rawRow = currentRawData[currentHeaderRow] || [];
-  let opts = '';
-  const maxCols = Math.min(Math.max(hRow.length, rawRow.length), 20);
-  for (let c = 0; c < maxCols; c++) {
-    let name = safeStr(hRow[c]).replace(/\n/g, ' ') || safeStr(rawRow[c]).replace(/\n/g, ' ') || `(Col ${c + 1})`;
-    const display = name.length > 30 ? name.substring(0, 30) + '...' : name;
-    opts += `<option value="${c}">Col ${c + 1}: ${display}</option>`;
-  }
-  if (useData.length > currentHeaderRow + 1) {
-    const dataRow = useData[currentHeaderRow + 1] || [];
-    for (let c = maxCols; c < Math.min(dataRow.length, 25); c++) {
-      opts += `<option value="${c}">Col ${c + 1}: (no header)</option>`;
-    }
-  }
-  return opts;
+  const hRow    = useData[currentHeaderRow] || [];
+  const rawRow  = currentRawData[currentHeaderRow] || [];
+  const extraRow = useData.length > currentHeaderRow + 1 ? (useData[currentHeaderRow + 1] || []) : [];
+  return buildColOptionsHTML(hRow, rawRow, extraRow);
 }
 
 function autoMap() {
@@ -1301,34 +1241,12 @@ function updateFleetOverview() {
 // EXPORT
 // ============================================
 function exportAll() {
-  const allRows = [];
-  for (const rig of RIGS) {
-    const s = rigStore[rig];
-    if (!s || !s.rows.length) continue;
-    for (const r of s.rows) {
-      allRows.push({
-        Rig: rig, Customer: s.meta.customer, Well: s.meta.well,
-        'Contract No': s.meta.contract, 'P.O': s.meta.po,
-        Date: r.date, Operating: r.operating, Reduced: r.reduced, Breakdown: r.breakdown,
-        Special: r.special, 'Force Maj': r.force_maj, 'Zero Rate': r.zero_rate,
-        Standby: r.standby, Repair: r.repair, 'Rig Move': r.rig_move,
-        'Total Hrs': r.total_hrs,
-        'OBM Oper': r.obm_oper, 'OBM Red': r.obm_red, 'OBM BD': r.obm_bd,
-        'OBM Spe': r.obm_spe, 'OBM Zero': r.obm_zero,
-        Operation: r.operation, 'Total Hours Repair': r.total_hrs_repair, Remarks: r.remarks,
-      });
-    }
-  }
+  const allRows = buildAllRowsData(rigStore, RIGS);
   if (!allRows.length) { alert('No data to export'); return; }
   const ws = XLSX.utils.json_to_sheet(allRows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'All Rigs');
-  ws['!cols'] = [
-    { wch: 6 }, { wch: 8 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-    { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 9 },
-    { wch: 9 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 8 },
-    { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 50 }, { wch: 12 }, { wch: 25 },
-  ];
+  ws['!cols'] = EXPORT_COL_WIDTHS;
   XLSX.writeFile(wb, `CONSOLIDATED_BILLING_${getMonthName(billingMonth).toUpperCase()}_${billingYear}.xlsx`);
   log(`Exported ${allRows.length} rows`, 'ok');
 }
@@ -1336,27 +1254,7 @@ function exportAll() {
 function exportExceptionReport() {
   const qc = buildQCModel(rigStore, billingYear, billingMonth, RIGS);
   if (typeof XLSX === 'undefined') { alert('XLSX library not loaded'); return; }
-  const exRows = qc.exceptions.map(e => ({
-    Rig: e.rig, Customer: e.customer, Date: e.date,
-    'Submitted Hrs': Number(e.submitted.toFixed(2)),
-    'Missing Hrs': Number(e.missing.toFixed(2)),
-    Issue: e.issue, 'Action Required': e.action, Severity: e.severity,
-  }));
-  const rigRows = qc.rigSummaries.map(r => ({
-    Rig: r.rig, Customer: r.customer, Well: r.well,
-    'Submitted Days': r.submittedDays, 'Expected Days': r.expectedDays,
-    'Complete Days': r.completeDays, 'Missing Days': r.missingDays,
-    'Partial Days': r.partialDays, 'Over 24h Days': r.overDays,
-    'Submitted Hrs': Number(r.total.toFixed(2)),
-    'Missing Hrs': Number(r.missingHrs.toFixed(2)),
-    'Completion %': Number(r.completion.toFixed(2)), Status: r.status,
-  }));
-  const dailyRows = qc.daily.map(d => ({
-    Day: d.day, 'Expected Hrs': d.expected,
-    'Submitted Hrs': Number(d.submitted.toFixed(2)),
-    'Missing Hrs': Number(d.missing_hrs.toFixed(2)),
-    'Complete Rigs': d.completeRigs, 'Issue Rigs': d.issueRigs,
-  }));
+  const { exRows, rigRows, dailyRows } = buildExceptionReportSheets(qc);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rigRows), 'Rig QC Summary');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(exRows), 'QC Exceptions');
