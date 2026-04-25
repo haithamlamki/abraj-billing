@@ -12,7 +12,7 @@ import {
   getRigMeta, getDayMap, buildQCModel, generateExecutiveSummary,
   computeExtractionConfidence, normalizeExtractedData,
 } from './qc.js';
-import { AUTO_ACCEPT_THRESHOLD, evaluateIssues } from './review.js';
+import { AUTO_ACCEPT_THRESHOLD } from './review.js';
 import {
   saveToStorage, loadFromStorage, clearStorage as clearStorageNow,
   buildJsonExportPayload, parseJsonImport,
@@ -21,7 +21,11 @@ import { createOcrRunner } from './pipeline/ocr.js';
 import { parsePdfBuffer } from './pipeline/parsePdf.js';
 import { parseExcelBuffer } from './pipeline/parseExcel.js';
 import {
-  ensureRig, getRig, setRigMeta, setRigMetaFallback, addFileToRig,
+  extractFromSheet as extractFromSheetPipeline,
+  mergeExtractionSilently as mergeExtractionSilentlyPipeline,
+} from './pipeline/autoProcess.js';
+import {
+  ensureRig, getRig, setRigMeta, addFileToRig,
   replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
   clearRigs, aggregateStats, hasData, updateRigMetaFields,
 } from './state/rigStore.js';
@@ -567,89 +571,8 @@ async function finishBatchOrContinue() {
 const reviewQueue = [];
 let reviewIdSeq = 1;
 
-function extractFromSheet({ sheetName, rawData, formatted, fileName, filenameRigHint }) {
-  const useData = formatted && formatted.length ? formatted : rawData;
-  const headerRow = findHeaderRow(useData);
-  const meta = detectMeta(useData, headerRow >= 0 ? headerRow : 10);
-  const rig = filenameRigHint || (meta.rig ? parseInt(meta.rig) : null);
-
-  let rows = [];
-  let map = {};
-
-  if (headerRow >= 0) {
-    // Reuse the autoMap logic: prefer formatted text but fall back to raw text/data.
-    const fmtRow = useData[headerRow] || [];
-    const rawRow = rawData[headerRow] || [];
-    const hRow = [];
-    const maxLen = Math.max(fmtRow.length, rawRow.length);
-    for (let i = 0; i < maxLen; i++) {
-      const fv = safeStr(fmtRow[i]).replace(/\n/g, ' ');
-      const rv = safeStr(rawRow[i]).replace(/\n/g, ' ');
-      if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(fv) && rv && !/^\d/.test(rv)) hRow.push(rv);
-      else if (!fv && rv) hRow.push(rv);
-      else hRow.push(fv || rv);
-    }
-    map = autoMapHeaders(hRow);
-    detectUnnamedTextColumns(map, useData, headerRow);
-
-    // Handle "stacked" headers where row above has the column label (e.g., Total / Hours).
-    if (headerRow > 0) {
-      const prevRow = (useData[headerRow - 1] || []).map(v => safeStr(v));
-      for (let c = 0; c < prevRow.length; c++) {
-        if (prevRow[c] && hRow[c]) {
-          const combined = (prevRow[c] + ' ' + hRow[c]).toLowerCase();
-          if (/(total\s*h|total\s*hrs)/.test(combined) && map.total_hrs === undefined) map.total_hrs = c;
-          if (/operation/i.test(combined) && map.operation === undefined) map.operation = c;
-        }
-      }
-    }
-
-    // Structured log for inventory tooling — captures the headers seen and the
-    // resolved mapping for every silent extraction.
-    log(`Silent map [${fileName}]: headers=[${hRow.join(' | ')}] map=${JSON.stringify(map)}`, 'info');
-
-    const extract = extractRows({
-      rawData,
-      formatted,
-      headerRow,
-      map,
-      billingYear,
-      billingMonth,
-    });
-    rows = extract.rows;
-  }
-
-  const confidence = computeExtractionConfidence({
-    rigNum: rig,
-    headerRow,
-    map,
-    rows,
-    daysInMonth: getDaysInMonth(billingYear, billingMonth),
-  });
-
-  // Detect duplicates + over-hours on the extracted rows (independent of mergeRowsIntoRig).
-  const seenDates = new Set();
-  let duplicates = 0;
-  let overHoursCount = 0;
-  for (const r of rows) {
-    if (seenDates.has(r.date)) duplicates++;
-    seenDates.add(r.date);
-    if (r.total_hrs > 24.5) overHoursCount++;
-  }
-
-  const issues = evaluateIssues({ rig, headerRow, rows, confidence, duplicates, overHoursCount });
-
-  return {
-    sheetName, fileName, rig,
-    meta: {
-      customer: meta.cust || (rig ? RIG_CUST[rig] : '') || '',
-      well: meta.well || '',
-      contract: meta.contract || '',
-      po: meta.po || '',
-    },
-    headerRow, map, rows, confidence, duplicates, overHoursCount, issues,
-    raw: rawData, formatted,
-  };
+function extractFromSheet(params) {
+  return extractFromSheetPipeline(params, { year: billingYear, month: billingMonth, log });
 }
 
 function pushReviewCard(extraction, fileName, extraIssues = []) {
@@ -673,14 +596,9 @@ function pushReviewCard(extraction, fileName, extraIssues = []) {
 }
 
 function mergeExtractionSilently(extraction, fileName) {
-  if (!extraction.rig) return { ok: false, conflicts: [] };
-  setRigMetaFallback(rigStore, extraction.rig, extraction.meta, { customer: 'PDO' });
-
-  const sourceLabel = /\.pdf$/i.test(fileName) ? 'PDF (approved)' : 'Excel';
-  const result = mergeRowsIntoRig(rigStore, extraction.rig, extraction.rows, sourceLabel, fileName);
-  Object.assign(rigStore, result.store);
-
-  return { ok: true, ...result };
+  const result = mergeExtractionSilentlyPipeline(extraction, fileName, rigStore);
+  if (result.ok) Object.assign(rigStore, result.store);
+  return result;
 }
 
 /**
