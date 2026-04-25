@@ -38,6 +38,7 @@ import { renderConflicts as renderConflictsDOM } from './views/conflicts.js';
 import {
   buildTimelineHTML, renderFleetOverview as renderFleetOverviewDOM,
 } from './views/fleetOverview.js';
+import { renderResult as renderResultDOM } from './views/result.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -1170,159 +1171,24 @@ function applyMapping() {
 }
 
 // ============================================
-// RESULT VIEW
+// RESULT VIEW  (rendering delegated to src/views/result.js)
 // ============================================
 function showResult(rigNum, cust, well, contract, po, rows) {
   setStep(3);
   const daysInMonth = getDaysInMonth(billingYear, billingMonth);
-  const monthName = getMonthName(billingMonth);
-
-  const complete = rows.filter(r => r.total_hrs >= 23.5).length;
-  const partial = rows.filter(r => r.total_hrs > 0 && r.total_hrs < 23.5).length;
-  const missing = daysInMonth - rows.length;
-  const pct = daysInMonth ? Math.round((complete / daysInMonth) * 100) : 0;
-  const pctCls = pct >= 95 ? 'ok' : pct >= 70 ? 'warn' : 'bad';
-
-  document.getElementById('resultSummary').innerHTML = `
-    <div class="sum-item"><span class="sum-label">Rig</span><span class="sum-val" style="color:var(--cyan)">${rigNum}</span></div>
-    <div class="sum-item"><span class="sum-label">Customer</span><span class="sum-val">${escapeHtml(cust) || '—'}</span></div>
-    <div class="sum-item" style="flex:1;min-width:120px"><span class="sum-label">Well</span><span class="sum-val" style="font-size:.85rem">${escapeHtml(well) || '—'}</span></div>
-    <div class="sum-item"><span class="sum-label">Days</span><span class="sum-val ${pctCls}">${rows.length} / ${daysInMonth}</span></div>
-    <div class="sum-item"><span class="sum-label">Complete</span><span class="sum-val ${pctCls}">${pct}%</span></div>
-    ${partial > 0 ? `<div class="sum-item"><span class="sum-label">Partial</span><span class="sum-val warn">${partial}</span></div>` : ''}
-    ${missing > 0 ? `<div class="sum-item"><span class="sum-label">Missing</span><span class="sum-val bad">${missing}</span></div>` : ''}
-  `;
-  document.getElementById('resultTimelineTitle').textContent = `${monthName} ${billingYear} — ${complete} full, ${partial} partial, ${missing} missing`;
-  document.getElementById('resultTitle').textContent = `${rows.length} rows loaded${getQueueStatus()}`;
-
-  // Mini timeline
-  const dayMap = {};
-  for (const row of rows) {
-    const d = parseDate(row.date);
-    if (d) dayMap[d.getDate()] = { total: row.total_hrs || 0, operating: row.operating || 0 };
-  }
-  let tlHtml = '<div style="display:flex;gap:2px;align-items:end;height:40px">';
-  for (let d = 1; d <= daysInMonth; d++) {
-    const rec = dayMap[d];
-    if (!rec) {
-      tlHtml += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px">
-        <div style="width:100%;height:28px;background:var(--red);opacity:.25;border-radius:2px" title="${monthName} ${d}: no data"></div>
-        <span style="font-size:.5rem;color:var(--red)">${d}</span></div>`;
-    } else {
-      const frac = Math.min(rec.total / 24, 1);
-      const bg = frac >= 0.98 ? 'var(--green)' : 'var(--orange)';
-      const h = Math.max(4, Math.round(frac * 28));
-      tlHtml += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px" title="${monthName} ${d}: ${rec.total}h${frac < 0.98 ? ` (${(24 - rec.total).toFixed(1)}h gap)` : ''}">
-        <div style="width:100%;height:${28 - h}px"></div>
-        <div style="width:100%;height:${h}px;background:${bg};border-radius:2px" data-scroll-day="${d}"></div>
-        <span style="font-size:.5rem;color:var(--text3)">${d}</span></div>`;
-    }
-  }
-  tlHtml += '</div>';
-  const tlEl = document.getElementById('resultTimeline');
-  tlEl.innerHTML = tlHtml;
-  tlEl.querySelectorAll('[data-scroll-day]').forEach(el => {
-    el.addEventListener('click', () => scrollToDay(parseInt(el.dataset.scrollDay)));
-  });
-
-  // Data table
-  let html = '<table class="result-table">';
-  html += '<thead><tr class="grp-hdr"><th colspan="3"></th>';
-  html += '<th class="grp-hrs" colspan="9">Hour categories</th>';
-  html += '<th class="grp-hrs" colspan="1">Total</th>';
-  html += '<th class="grp-obm" colspan="5">OBM (Oil-Based Mud)</th>';
-  html += '<th class="grp-ops" colspan="3">Description</th>';
-  html += '</tr><tr>';
-  html += '<th class="cat-meta">&nbsp;</th><th class="cat-meta">#</th><th class="cat-meta">Date</th>';
-  html += '<th class="cat-hrs">Operating</th><th class="cat-hrs">Reduced</th><th class="cat-hrs">Breakdown</th><th class="cat-hrs">Special</th>';
-  html += '<th class="cat-hrs">Force&nbsp;Maj</th><th class="cat-hrs">Zero&nbsp;Rate</th><th class="cat-hrs">Standby</th><th class="cat-hrs">Repair</th><th class="cat-hrs">Rig&nbsp;Move</th>';
-  html += '<th class="cat-hrs" title="Auto-calculated: sum of all hour categories">Total *</th>';
-  html += '<th class="cat-obm">Oper</th><th class="cat-obm">Red</th><th class="cat-obm">BD</th><th class="cat-obm">Spe</th><th class="cat-obm">Zero</th>';
-  html += '<th class="cat-ops">Operation</th><th class="cat-ops">Repair&nbsp;Hrs</th><th class="cat-ops">Remarks</th>';
-  html += '</tr></thead><tbody>';
-
-  let totOp = 0, totRed = 0, totBD = 0, totTotal = 0;
-  const obmKeys = ['obm_oper', 'obm_red', 'obm_bd', 'obm_spe', 'obm_zero'];
-  const hrColors = { operating: '#10b981', reduced: '#f59e0b', breakdown: '#ef4444' };
-
-  rows.forEach((row, i) => {
-    const total = row.total_hrs || 0;
-    let statusCls = 'bad', statusChar = '×';
-    if (total >= 23.5) { statusCls = 'ok'; statusChar = '✓'; }
-    else if (total > 0) { statusCls = 'warn'; statusChar = '!'; }
-    totOp += row.operating; totRed += row.reduced; totBD += row.breakdown; totTotal += total;
-
-    const d = parseDate(row.date);
-    const dayAttr = d ? `data-day="${d.getDate()}"` : '';
-
-    html += `<tr ${dayAttr} class="${statusCls === 'bad' && total > 0 ? 'invalid' : ''}" data-idx="${i}">`;
-    html += `<td class="row-status ${statusCls}" title="${statusCls === 'ok' ? '24h OK' : statusCls === 'warn' ? 'Partial day (' + total + 'h)' : 'Missing hours'}">${statusChar}</td>`;
-    html += `<td>${i + 1}</td>`;
-    html += `<td contenteditable="true" class="editable" data-key="date" style="white-space:nowrap">${row.date}</td>`;
-
-    for (const k of HR_KEYS) {
-      const c = hrColors[k] || '';
-      const v = row[k] || 0;
-      html += `<td contenteditable="true" class="editable" data-key="${k}" data-row-idx="${i}" ${c ? `style="color:${c}"` : ''}>${v}</td>`;
-    }
-
-    const gap = 24 - total;
-    const totalColor = total >= 23.5 ? '#06b6d4' : total > 0 ? '#ef4444' : '#64748b';
-    const gapText = gap > 0.5 ? ` (${gap.toFixed(1)}h gap)` : '';
-    html += `<td style="color:${totalColor};font-weight:700" title="Calculated: sum of all hour columns${gapText}" data-idx="${i}" data-key="total_hrs">${total}${gap > 0.5 ? ' !' : ''}</td>`;
-
-    for (const k of obmKeys) {
-      const v = row[k] || 0;
-      html += `<td contenteditable="true" class="editable" data-key="${k}" data-row-idx="${i}">${v}</td>`;
-    }
-
-    html += `<td contenteditable="true" class="editable text-cell" data-key="operation" data-row-idx="${i}" style="min-width:280px;max-width:420px;white-space:normal;line-height:1.3" title="${escapeHtml(row.operation)}">${escapeHtml(row.operation)}</td>`;
-    html += `<td contenteditable="true" class="editable" data-key="total_hrs_repair" data-row-idx="${i}">${row.total_hrs_repair || 0}</td>`;
-    html += `<td contenteditable="true" class="editable text-cell" data-key="remarks" data-row-idx="${i}">${escapeHtml(row.remarks)}</td>`;
-    html += '</tr>';
-  });
-
-  html += `<tfoot><tr><td></td><td>Total</td><td>${rows.length} days</td>`;
-  html += `<td style="color:#10b981">${totOp.toFixed(1)}</td><td style="color:#f59e0b">${totRed.toFixed(1)}</td><td style="color:#ef4444">${totBD.toFixed(1)}</td>`;
-  html += `<td colspan="6"></td><td style="color:#06b6d4">${totTotal.toFixed(0)}</td><td colspan="8"></td></tr></tfoot>`;
-  html += '</table>';
-
-  const scroll = document.getElementById('resultScroll');
-  scroll.innerHTML = html;
-  scroll.querySelectorAll('[contenteditable="true"][data-row-idx]').forEach(td => {
-    const idx = parseInt(td.dataset.rowIdx);
-    const key = td.dataset.key;
-    const isHour = HR_KEYS.includes(key);
-    td.addEventListener('blur', () => {
-      editCell(td, idx, key);
-      if (isHour) recalcTotal(idx);
-    });
-  });
-
-  // Warnings
-  const warnEl = document.getElementById('resultWarnings');
-  warnEl.innerHTML = '';
-  const warnings = [];
-  if (rows.length < daysInMonth) warnings.push({ type: 'warn', msg: `Only ${rows.length} of ${daysInMonth} days loaded — ${daysInMonth - rows.length} day(s) may be in another file.` });
-  if (rows.length > daysInMonth) warnings.push({ type: 'bad', msg: `${rows.length} rows but month only has ${daysInMonth} days — possible duplicates.` });
-  const badTotals = rows.filter(r => r.total_hrs > 0 && Math.abs(r.total_hrs - 24) > 0.5);
-  if (badTotals.length) warnings.push({ type: 'warn', msg: `${badTotals.length} day(s) not totaling 24h. Highlighted in the table.` });
-  if (warnings.length) {
-    warnEl.innerHTML = '<div class="card" style="padding:10px 14px;margin-top:8px">' +
-      warnings.map(w => `<div class="hint ${w.type === 'bad' ? 'warn' : w.type}" style="font-size:.78rem;margin-bottom:2px">&#9888; ${w.msg}</div>`).join('') +
-      '</div>';
-  }
-
-  // Confidence strip
   const conf = computeExtractionConfidence({
-    rigNum, headerRow: currentHeaderRow, map: currentMapping, rows: rows || [],
-    daysInMonth,
+    rigNum, headerRow: currentHeaderRow, map: currentMapping,
+    rows: rows || [], daysInMonth,
   });
-  const confColor = conf.score >= 90 ? 'var(--green)' : conf.score >= 70 ? 'var(--orange)' : 'var(--red)';
-  const confStrip = `<div class="card" style="padding:10px 14px;margin-top:8px;border-color:${confColor}"><div class="hint" style="font-size:.78rem;color:${confColor};font-weight:800">Extraction Confidence: ${conf.score}% — ${conf.status}</div><div class="hint" style="font-size:.72rem;color:var(--text2);margin-top:3px">${conf.issues.length ? conf.issues.join(' · ') : 'Rig, header, mapping, dates, and daily rows look acceptable.'}</div></div>`;
-  warnEl.insertAdjacentHTML('afterbegin', confStrip);
-
-  document.getElementById('acceptAllBtn').style.display = pendingSheets.length > 0 ? '' : 'none';
+  renderResultDOM(rigNum, cust, well, rows, {
+    year: billingYear, month: billingMonth,
+    queueStatus: getQueueStatus(),
+    conf,
+    pendingSheetsCount: pendingSheets.length,
+    onEditCell: editCell,
+    onRecalcTotal: recalcTotal,
+    onScrollToDay: scrollToDay,
+  });
 }
 
 function scrollToDay(day) {
