@@ -13,6 +13,10 @@ import {
   computeExtractionConfidence, normalizeExtractedData,
 } from './qc.js';
 import { AUTO_ACCEPT_THRESHOLD, evaluateIssues } from './review.js';
+import {
+  saveToStorage, loadFromStorage, clearStorage as clearStorageNow,
+  buildJsonExportPayload, parseJsonImport,
+} from './state/storage.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -46,7 +50,6 @@ let pendingSheets = [];
 let billingMonth = new Date().getMonth() + 1;
 let billingYear = new Date().getFullYear();
 
-const STORAGE_KEY = 'abraj_billing_extractor_data';
 const LAST_CONFLICTS = { rigNum: null, conflicts: [] };
 
 // Batch mode: drop many files, auto-accept high-confidence extractions end-to-end.
@@ -1992,16 +1995,7 @@ function exportExceptionReport() {
 }
 
 function exportJSON() {
-  const payload = { version: '2.0-qc', exportedAt: new Date().toISOString(), billingMonth, billingYear, rigs: {} };
-  for (const rig of RIGS) {
-    if (rigStore[rig] && rigStore[rig].rows && rigStore[rig].rows.length) {
-      payload.rigs[rig] = {
-        meta: rigStore[rig].meta || getRigMeta(rigStore, rig),
-        rows: rigStore[rig].rows,
-        files: rigStore[rig].files || [],
-      };
-    }
-  }
+  const payload = buildJsonExportPayload(rigStore, billingMonth, billingYear);
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2016,27 +2010,17 @@ function importJSONFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const data = JSON.parse(reader.result);
-      if (data.billingMonth) billingMonth = data.billingMonth;
-      if (data.billingYear) billingYear = data.billingYear;
+      const result = parseJsonImport(reader.result);
+      if (result.billingMonth) billingMonth = result.billingMonth;
+      if (result.billingYear) billingYear = result.billingYear;
       updateMonthYearUI();
       for (const k of Object.keys(rigStore)) delete rigStore[k];
-      const rigs = data.rigs || {};
-      for (const [rig, val] of Object.entries(rigs)) {
-        const r = parseInt(rig);
-        if (RIGS.includes(r)) {
-          rigStore[r] = {
-            meta: val.meta || { customer: RIG_CUST[r] },
-            rows: val.rows || [],
-            files: val.files || ['json-import'],
-          };
-        }
-      }
+      Object.assign(rigStore, result.rigs);
       buildRigList();
       updateStats();
       autoSave();
       renderExecutiveSummary();
-      log(`Imported JSON state: ${Object.keys(rigs).length} rigs`, 'ok');
+      log(`Imported JSON state: ${result.count} rigs`, 'ok');
     } catch (e) {
       alert('Invalid JSON file: ' + e.message);
       log('Import JSON failed: ' + e.message, 'err');
@@ -2056,34 +2040,12 @@ function clearAll() {
 }
 
 // ============================================
-// PERSISTENCE
+// PERSISTENCE — thin wrappers around src/state/storage.js
 // ============================================
 function autoSaveNow() {
-  try {
-    const data = {};
-    for (const rig of RIGS) {
-      if (rigStore[rig] && rigStore[rig].rows.length > 0) {
-        data[rig] = {
-          meta: rigStore[rig].meta,
-          rows: rigStore[rig].rows.map(r => {
-            const c = { ...r };
-            delete c._source;
-            return c;
-          }),
-          files: rigStore[rig].files,
-        };
-      }
-    }
-    if (Object.keys(data).length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        savedAt: new Date().toISOString(),
-        billingMonth, billingYear, rigs: data,
-      }));
-      log(`Auto-saved ${Object.keys(data).length} rigs to browser storage`, 'info');
-    }
-  } catch (e) {
-    log('Auto-save failed: ' + e.message, 'err');
-  }
+  const count = saveToStorage(rigStore, billingMonth, billingYear);
+  if (count > 0) log(`Auto-saved ${count} rigs to browser storage`, 'info');
+  else if (count < 0) log('Auto-save failed', 'err');
 }
 
 // Debounced wrapper: coalesces bursts of writes from batch processing into a
@@ -2098,39 +2060,31 @@ function autoSave() {
 }
 
 function autoLoad() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const saved = JSON.parse(raw);
-    if (!saved.rigs) return false;
-    if (saved.billingMonth) billingMonth = saved.billingMonth;
-    if (saved.billingYear) billingYear = saved.billingYear;
-    updateMonthYearUI();
-    let count = 0;
-    for (const [rig, data] of Object.entries(saved.rigs)) {
-      const rigNum = parseInt(rig);
-      if (!RIGS.includes(rigNum)) continue;
-      rigStore[rigNum] = {
-        meta: data.meta || {},
-        rows: data.rows || [],
-        files: data.files || ['localStorage'],
-      };
-      count++;
-    }
-    if (count > 0) {
-      buildRigList();
-      updateStats();
-      log(`Restored ${count} rigs from browser storage (saved ${saved.savedAt ? new Date(saved.savedAt).toLocaleString() : 'unknown'})`, 'ok');
-      return true;
-    }
-  } catch (e) {
-    log('Auto-load failed: ' + e.message, 'err');
+  const saved = loadFromStorage();
+  if (!saved) return false;
+  if (saved.billingMonth) billingMonth = saved.billingMonth;
+  if (saved.billingYear) billingYear = saved.billingYear;
+  updateMonthYearUI();
+  let count = 0;
+  for (const [rig, data] of Object.entries(saved.rigs)) {
+    const rigNum = parseInt(rig);
+    if (!RIGS.includes(rigNum)) continue;
+    rigStore[rigNum] = {
+      meta: data.meta || {},
+      rows: data.rows || [],
+      files: data.files || ['localStorage'],
+    };
+    count++;
   }
-  return false;
+  if (count === 0) return false;
+  buildRigList();
+  updateStats();
+  log(`Restored ${count} rigs from browser storage (saved ${saved.savedAt ? new Date(saved.savedAt).toLocaleString() : 'unknown'})`, 'ok');
+  return true;
 }
 
 function clearStorage() {
-  localStorage.removeItem(STORAGE_KEY);
+  clearStorageNow();
   log('Browser storage cleared', 'info');
 }
 
