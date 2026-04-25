@@ -35,6 +35,9 @@ import {
   ensureReviewQueueContainer, buildReviewCardHTML, renderReviewQueue as renderReviewQueueDOM,
 } from './views/reviewQueue.js';
 import { renderConflicts as renderConflictsDOM } from './views/conflicts.js';
+import {
+  buildTimelineHTML, renderFleetOverview as renderFleetOverviewDOM,
+} from './views/fleetOverview.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -1487,37 +1490,8 @@ function setStep(n) {
 }
 
 // ============================================
-// RIG LIST + TIMELINE
+// RIG LIST + TIMELINE  (timeline HTML delegated to src/views/fleetOverview.js)
 // ============================================
-function buildTimeline(store) {
-  const { map } = getDayMap(store || { rows: [] }, billingYear, billingMonth);
-  let html = '<div class="timeline-31">';
-  let missingHrs = 0, missingDays = 0, incompleteDays = 0, overDays = 0;
-  const monthName = getMonthName(billingMonth);
-  const days = getDaysInMonth(billingYear, billingMonth);
-  for (let d = 1; d <= days; d++) {
-    const rows = map[d] || [];
-    const total = rows.reduce((s, r) => s + rowTotal(r), 0);
-    const operating = rows.reduce((s, r) => s + safeNum(r.operating), 0);
-    if (total >= 23.5 && total <= 24.5) {
-      html += `<div class="day-cell full" title="${monthName} ${d}: ${total.toFixed(1)}h total, ${operating.toFixed(1)}h oper"></div>`;
-    } else if (total > 24.5) {
-      html += `<div class="day-cell partial-day" style="background:var(--purple)" title="${monthName} ${d}: ${total.toFixed(1)}h total — OVER 24h, review duplicate/mapping"></div>`;
-      overDays++;
-    } else if (total > 0) {
-      const gap = 24 - total;
-      html += `<div class="day-cell partial-day" title="${monthName} ${d}: ${total.toFixed(1)}h total — ${gap.toFixed(1)}h missing"></div>`;
-      missingHrs += gap;
-      incompleteDays++;
-    } else {
-      html += `<div class="day-cell missing" title="${monthName} ${d}: NO DATA — 24 hrs missing"></div>`;
-      missingHrs += 24;
-      missingDays++;
-    }
-  }
-  html += '</div>';
-  return { html, missingDays, incompleteDays, overDays, missingHrs };
-}
 
 function buildRigList() {
   const el = document.getElementById('rigList');
@@ -1530,7 +1504,7 @@ function buildRigList() {
     const store = rigStore[rig];
     const dayCount = store ? store.rows.length : 0;
     const hasData = dayCount > 0;
-    const tl = buildTimeline(store);
+    const tl = buildTimelineHTML(store, billingYear, billingMonth);
     const isComplete = hasData && dayCount === days && tl.missingDays === 0 && tl.incompleteDays === 0;
     const isPartial = hasData && !isComplete;
 
@@ -1591,41 +1565,7 @@ function updateStats() {
 }
 
 function updateFleetOverview() {
-  const panel = document.getElementById('fleetOverview');
-  if (!panel) return;
-  panel.style.display = '';
-  const grid = document.getElementById('fleetGrid');
-  grid.innerHTML = '';
-  const qc = buildQCModel(rigStore, billingYear, billingMonth, RIGS);
-
-  for (const r of qc.rigSummaries) {
-    let bg = 'rgba(239,68,68,.15)', color = 'var(--red)';
-    if (r.status === 'Complete') { bg = 'rgba(16,185,129,.2)'; color = 'var(--green)'; }
-    else if (r.submittedDays > 0) { bg = 'rgba(245,158,11,.15)'; color = 'var(--orange)'; }
-    const cell = document.createElement('div');
-    cell.style.cssText = `background:${bg};border-radius:3px;padding:2px 4px;text-align:center;cursor:pointer;flex:1;min-width:0`;
-    cell.setAttribute('role', 'button');
-    cell.setAttribute('tabindex', '0');
-    cell.setAttribute('aria-label', `Rig ${r.rig} — ${r.status}, ${r.submittedDays} of ${qc.daysInMonth} days`);
-    cell.innerHTML = `<div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.65rem;color:${color}">${r.rig}</div><div style="font-size:.45rem;color:var(--text3)">${r.submittedDays}/${qc.daysInMonth}</div>`;
-    cell.title = `Rig ${r.rig}: ${r.status}; ${r.missingDays} missing, ${r.partialDays} partial, ${r.missingHrs.toFixed(1)} missing hrs`;
-    cell.addEventListener('click', () => selectRig(r.rig));
-    cell.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRig(r.rig); }
-    });
-    grid.appendChild(cell);
-  }
-  const summary = document.getElementById('fleetSummary');
-  if (summary) summary.textContent = `${qc.fullRigs}/${RIGS.length} complete · ${qc.reviewRigs} need review · ${qc.missingHrs.toFixed(0)}h missing`;
-  const miss = document.getElementById('fleetMissing');
-  if (miss) {
-    miss.style.display = 'block';
-    miss.innerHTML = qc.reviewRigs
-      ? qc.rigSummaries.filter(r => r.status !== 'Complete').slice(0, 10)
-        .map(r => `<span style="color:var(--orange)">Rig ${r.rig}: ${r.missingDays} missing + ${r.partialDays} partial + ${r.overDays} over (${r.missingHrs.toFixed(0)}h)</span>`)
-        .join(' · ')
-      : '<span style="color:var(--green)">All rigs complete for the full month.</span>';
-  }
+  renderFleetOverviewDOM(rigStore, billingYear, billingMonth, RIGS, selectRig);
 }
 
 // ============================================
