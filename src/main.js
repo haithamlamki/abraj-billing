@@ -31,6 +31,9 @@ import {
   finishBatch, resetBatch as resetBatchState, isRunning,
   batchProgress,
 } from './state/batch.js';
+import {
+  ensureReviewQueueContainer, buildReviewCardHTML, renderReviewQueue as renderReviewQueueDOM,
+} from './views/reviewQueue.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -744,58 +747,10 @@ async function autoProcessCurrentFile() {
 }
 
 // ============================================
-// REVIEW QUEUE UI
+// REVIEW QUEUE UI  (rendering delegated to src/views/reviewQueue.js)
 // ============================================
-function ensureReviewQueueContainer() {
-  let el = document.getElementById('reviewQueue');
-  if (el) return el;
-  el = document.createElement('div');
-  el.id = 'reviewQueue';
-  el.style.cssText = 'display:none;margin:0 0 8px;';
-  const mainPanel = document.getElementById('mainPanel');
-  if (!mainPanel) return el;
-  // Insert after #batchBanner if present, else at top.
-  const banner = document.getElementById('batchBanner');
-  if (banner && banner.nextSibling) mainPanel.insertBefore(el, banner.nextSibling);
-  else mainPanel.insertBefore(el, mainPanel.firstChild);
-  return el;
-}
-
 function renderReviewQueue() {
-  const el = ensureReviewQueueContainer();
-  if (reviewQueue.length === 0) {
-    el.style.display = 'none';
-    el.innerHTML = '';
-    return;
-  }
-  el.style.display = '';
-  el.innerHTML = reviewQueue.map(c => `
-    <div class="card" style="padding:12px 14px;margin-bottom:6px;border-color:var(--orange)">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-        <strong style="color:var(--orange);font-size:.85rem">${escapeHtml(c.fileName)}</strong>
-        <span style="color:var(--text3);font-size:.72rem">${c.sheetName ? '[' + escapeHtml(c.sheetName) + ']' : ''}</span>
-        <span style="color:var(--text2);font-size:.72rem">Rig ${c.rig ?? '?'} · ${escapeHtml(c.meta.customer) || '—'} · ${c.confidence ? c.confidence.score + '%' : ''}</span>
-        <span style="margin-left:auto;color:var(--text3);font-size:.68rem">${c.rows.length} rows extracted</span>
-      </div>
-      <div style="font-size:.74rem;color:var(--text2);margin-bottom:8px">
-        <strong style="color:var(--red)">Issues:</strong>
-        <ul style="margin:2px 0 0 18px;padding:0">
-          ${c.issues.map(i => `<li>${escapeHtml(i)}</li>`).join('')}
-        </ul>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${c.rig && c.rows.length ? `<button class="btn btn-sm" data-review-action="edit" data-review-id="${c.id}">Edit mapping</button>` : ''}
-        ${c.rig && c.rows.length ? `<button class="btn btn-green btn-sm" data-review-action="accept" data-review-id="${c.id}">Accept anyway</button>` : ''}
-        <button class="btn btn-red btn-sm" data-review-action="skip" data-review-id="${c.id}">Skip</button>
-      </div>
-    </div>
-  `).join('');
-
-  el.querySelectorAll('[data-review-action]').forEach(btn => {
-    const id = parseInt(btn.dataset.reviewId);
-    const action = btn.dataset.reviewAction;
-    btn.addEventListener('click', () => handleReviewAction(action, id));
-  });
+  renderReviewQueueDOM(reviewQueue, handleReviewAction);
 }
 
 function handleReviewAction(action, id) {
