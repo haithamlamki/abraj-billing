@@ -23,6 +23,8 @@ import os from 'node:os';
 const URL = process.env.URL || 'http://localhost:5173/';
 const ROOT = process.env.FEB_ROOT
   || 'C:/Users/80128/OneDrive - abrajoman.com/Desktop/3.2026/2. Billing sheets for all Rigs Feb 2026';
+const MONTH = process.env.MONTH || '2';
+const YEAR = process.env.YEAR || '2026';
 
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -92,8 +94,8 @@ await new Promise(r => setTimeout(r, 1500));
 await page.evaluate(() => { try { localStorage.clear(); } catch {} });
 await page.reload({ waitUntil: 'domcontentloaded' });
 await new Promise(r => setTimeout(r, 1500));
-await page.select('#monthSelect', '2');
-await page.$eval('#yearInput', el => { el.value = '2026'; el.dispatchEvent(new Event('change')); });
+await page.select('#monthSelect', MONTH);
+await page.$eval('#yearInput', (el, y) => { el.value = y; el.dispatchEvent(new Event('change')); }, YEAR);
 await new Promise(r => setTimeout(r, 300));
 
 console.log(`--- Dropping ${staged.length} PDFs as one batch ---`);
