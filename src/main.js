@@ -3,7 +3,7 @@ import {
   TARGET_COLS, MAP_GROUPS,
 } from './constants.js';
 import { safeNum, safeStr, fmtNum, escapeHtml } from './utils.js';
-import { toDateStr, parseDate, getDaysInMonth, getMonthName } from './dates.js';
+import { getDaysInMonth, getMonthName } from './dates.js';
 import { autoMapHeaders, detectUnnamedTextColumns } from './mapping.js';
 import { findHeaderRow, isFooterRow, classifyRows, detectMeta } from './detection.js';
 import { joinText, rowTotal, mergeRowsIntoRig } from './merge.js';
@@ -27,6 +27,7 @@ import {
 import {
   buildAllRowsData, buildExceptionReportSheets, EXPORT_COL_WIDTHS,
 } from './pipeline/export.js';
+import { parseConsolidatedRows } from './pipeline/consolidatedLoader.js';
 import {
   ensureRig, getRig, setRigMeta, addFileToRig,
   replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
@@ -47,6 +48,7 @@ import {
 import { renderResult as renderResultDOM } from './views/result.js';
 import { renderPreviewTable as renderPreviewTableDOM } from './views/preview.js';
 import { buildColOptionsHTML, buildMappingItemHTML } from './views/mappingUI.js';
+import { buildRigCardHTML } from './views/rigCard.js';
 import {
   ensureBatchBanner,
   renderBatchBanner as renderBatchBannerDOM,
@@ -1183,14 +1185,7 @@ function buildRigList() {
     div.setAttribute('role', 'button');
     div.setAttribute('tabindex', '0');
     div.setAttribute('aria-label', `Rig ${rig} (${cust}) — ${dayCount} of ${days} days`);
-    div.innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:1px">
-        <span class="r-num">${rig}</span>
-        <span class="r-cust" style="background:${color}22;color:${color}">${cust}</span>
-        <span class="r-days" style="margin-left:auto">${dayCount}/${days}</span>
-      </div>
-      ${tl.html}
-    `;
+    div.innerHTML = buildRigCardHTML(rig, cust, color, dayCount, days, tl.html);
     div.addEventListener('click', () => selectRig(rig));
     div.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRig(rig); }
@@ -1373,44 +1368,13 @@ async function loadConsolidated(buf) {
   const wb = XLSX.read(buf, { type: 'array', cellDates: true, raw: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json(ws, { defval: null });
+  const parsed = parseConsolidatedRows(data, { year: billingYear, month: billingMonth, rigs: RIGS });
   let count = 0;
-  for (const row of data) {
-    const rig = parseInt(row.Rig || row.rig);
-    if (!rig || !RIGS.includes(rig)) continue;
-    const entry = ensureRig(rigStore, rig);
+  for (const { rigNum, meta, row } of parsed) {
+    const entry = ensureRig(rigStore, rigNum);
     if (entry.files.length === 0) entry.files.push('consolidated');
-    updateRigMetaFields(rigStore, rig, {
-      customer: safeStr(row.Customer || row.customer) || RIG_CUST[rig] || '',
-      well: row.Well || row.well,
-      contract: row['Contract No'],
-      po: row['P.O'],
-    });
-    const dateStr = toDateStr(row.Date || row.date, billingYear, billingMonth);
-    if (!dateStr) continue;
-    const expectedSuffix = `-${getMonthName(billingMonth)}-${billingYear}`;
-    if (!dateStr.endsWith(expectedSuffix)) continue;
-    const inserted = appendRowIfNew(rigStore, rig, {
-      date: dateStr,
-      operating: safeNum(row.Operating || row.operating),
-      reduced: safeNum(row.Reduced || row.reduced),
-      breakdown: safeNum(row.Breakdown || row.breakdown),
-      special: safeNum(row.Special || row.special),
-      force_maj: safeNum(row['Force Maj'] || row.force_maj),
-      zero_rate: safeNum(row['Zero Rate'] || row.zero_rate),
-      standby: safeNum(row.Standby || row.standby),
-      repair: safeNum(row.Repair || row.repair),
-      rig_move: safeNum(row['Rig Move'] || row.rig_move),
-      total_hrs: safeNum(row['Total Hrs'] || row.total_hrs),
-      obm_oper: safeNum(row['OBM Oper'] || row.obm_oper),
-      obm_red: safeNum(row['OBM Red'] || row.obm_red),
-      obm_bd: safeNum(row['OBM BD'] || row.obm_bd),
-      obm_spe: safeNum(row['OBM Spe'] || row.obm_spe),
-      obm_zero: safeNum(row['OBM Zero'] || row.obm_zero),
-      operation: safeStr(row.Operation || row.operation),
-      total_hrs_repair: safeNum(row['Total Hours Repair'] || row.total_hrs_repair),
-      remarks: safeStr(row.Remarks || row.remarks),
-    });
-    if (inserted) count++;
+    updateRigMetaFields(rigStore, rigNum, meta);
+    if (appendRowIfNew(rigStore, rigNum, row)) count++;
   }
   for (const rig of RIGS) sortRowsByDate(rigStore, rig);
   log(`Loaded ${count} rows from consolidated file`, 'ok');
