@@ -17,6 +17,7 @@ import {
   saveToStorage, loadFromStorage, clearStorage as clearStorageNow,
   buildJsonExportPayload, parseJsonImport,
 } from './state/storage.js';
+import { createOcrRunner } from './pipeline/ocr.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -359,69 +360,9 @@ function parseExcel(buf) {
   autoProcessCurrentFile().catch(e => log('Auto-process error: ' + e.message, 'err'));
 }
 
-// ============================================
-// OCR for scanned PDFs (Tesseract.js via CDN)
-// ============================================
-let __tesseractWorker = null;
-async function getOcrWorker() {
-  if (__tesseractWorker) return __tesseractWorker;
-  if (typeof Tesseract === 'undefined') {
-    throw new Error('Tesseract.js not loaded (check CDN script tag)');
-  }
-  log('  Loading OCR engine (first run only; downloads ~15 MB language data)…', 'info');
-  __tesseractWorker = await Tesseract.createWorker('eng', 1, {
-    logger: m => {
-      if (m.status === 'recognizing text' && m.progress > 0) {
-        // Per-page progress; throttle via last-value guard
-        if (!getOcrWorker._last || Math.abs(m.progress - getOcrWorker._last) >= 0.2 || m.progress === 1) {
-          getOcrWorker._last = m.progress;
-          log(`    OCR: ${Math.round(m.progress * 100)}%`, 'info');
-        }
-      }
-    },
-  });
-  return __tesseractWorker;
-}
-
-async function ocrPageToItems(page, pageNum, scale = 3.0) {
-  const viewport = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  const ctx = canvas.getContext('2d');
-  // White background helps OCR on transparent pages
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvasContext: ctx, viewport }).promise;
-
-  const worker = await getOcrWorker();
-  // PSM 6 = assume a single uniform block of text (good for the body of a table).
-  // Whitelist typical billing characters to cut down on garbage tokens.
-  await worker.setParameters({
-    tessedit_pageseg_mode: '6',
-    tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,-/:# ',
-    preserve_interword_spaces: '1',
-  });
-  const { data } = await worker.recognize(canvas, {}, { blocks: true, words: true });
-
-  // Map Tesseract word bboxes (top-left origin, y grows down) back into pdf.js's
-  // coordinate space (origin bottom-left, y grows up) and un-scale.
-  const items = [];
-  const unscale = 1 / scale;
-  const pageHeight = page.getViewport({ scale: 1 }).height;
-
-  const words = data.words || [];
-  for (const w of words) {
-    const text = (w.text || '').trim();
-    if (!text) continue;
-    const bbox = w.bbox || {};
-    const x = Math.round(bbox.x0 * unscale);
-    const yTop = bbox.y0 * unscale;
-    const y = Math.round(pageHeight - yTop);
-    items.push({ x, y, text, page: pageNum });
-  }
-  return items;
-}
+// OCR for scanned PDFs — single runner, lazy Tesseract worker.
+const ocrRunner = createOcrRunner(log);
+const { ocrPageToItems } = ocrRunner;
 
 async function parsePDF(buf) {
   log(`Loading PDF: ${currentFileName}`, 'info');
