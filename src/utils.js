@@ -16,3 +16,9 @@ export function fmtNum(n, d = 0) {
 export function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
+
+const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+export function escapeHtml(v) {
+  return safeStr(v).replace(/[&<>"']/g, ch => HTML_ESCAPE_MAP[ch]);
+}

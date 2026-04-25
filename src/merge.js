@@ -43,6 +43,19 @@ export function mergeRowsIntoRig(rigStore, rigNum, newRows, sourceLabel, fileNam
       const newTotal = HR_KEYS.reduce((s, k) => s + safeNum(newRow[k]), 0);
       const existingSource = existing._source || 'unknown';
 
+      // Duplicate detection: two PDFs carrying the same daily data (e.g.
+      // "<well> Feb.pdf" and "<well> Feb sign.pdf") arrive in sequence. If
+      // every hour column matches within tolerance, treat the second as a
+      // re-import — keep the existing row, do not merge or add. Without this,
+      // partial days get their hours summed and false conflicts surface.
+      const hoursIdentical = HR_KEYS.every(k =>
+        Math.abs(safeNum(existing[k]) - safeNum(newRow[k])) < 0.05
+      );
+      if (hoursIdentical && existingTotal > 0) {
+        mergedDays++;
+        continue;
+      }
+
       const hasConflict = existingTotal > 0 && newTotal > 0 &&
         Math.abs(existingTotal - newTotal) > 0.5 && existingTotal >= 23.5;
       if (hasConflict) {

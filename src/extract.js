@@ -32,8 +32,22 @@ export function extractRows({ rawData, formatted, headerRow, map, billingYear, b
     const firstVal = safeStr(fmtRow[dIdx] ?? row[dIdx]).toLowerCase();
     if (/^(hrs|days|daily|total$|net|amount|hour)/.test(firstVal)) break;
 
-    const gn = key => (map[key] !== undefined ? safeNum(row[map[key]]) : 0);
-    const gs = key => (map[key] !== undefined ? safeStr(fmtRow[map[key]] ?? row[map[key]]) : '');
+    // map[key] is normally a single column index; for hour-bucket fields that
+    // can have multiple source columns (e.g. PREVENTIVE + RAPAIR + EQUIPMENT
+    // all collapse into "repair" per ops team), it can also be an array of
+    // indices that get summed.
+    const gn = key => {
+      const v = map[key];
+      if (v === undefined) return 0;
+      if (Array.isArray(v)) return v.reduce((s, idx) => s + safeNum(row[idx]), 0);
+      return safeNum(row[v]);
+    };
+    const gs = key => {
+      const v = map[key];
+      if (v === undefined) return '';
+      const idx = Array.isArray(v) ? v[0] : v;
+      return safeStr(fmtRow[idx] ?? row[idx]);
+    };
 
     const operating = gn('operating');
     const reduced = gn('reduced');

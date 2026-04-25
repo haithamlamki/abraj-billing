@@ -154,6 +154,27 @@ describe('mergeRowsIntoRig', () => {
     expect(result.conflicts[0].date).toBe('15-Mar-2026');
   });
 
+  it('skips identical re-import (signed copy of same PDF) without summing or flagging conflict', () => {
+    // Real-world case: "<well> Feb.pdf" then "<well> Feb sign.pdf" — same data,
+    // second arrival should be a no-op merge, not an additive conflict.
+    const partial = { ...pdfRow('15-Mar-2026'), operating: 12, reduced: 0, total_hrs: 12 };
+    const startStore = {
+      204: { meta: {}, rows: [{ ...partial, _source: 'PDF' }], files: ['well Feb.pdf'] },
+    };
+    const result = mergeRowsIntoRig(
+      startStore,
+      204,
+      [{ ...partial }],
+      'PDF (approved)',
+      'well Feb sign.pdf',
+    );
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.mergedDays).toBe(1);
+    const merged = result.store[204].rows[0];
+    expect(merged.operating).toBe(12); // unchanged, not 24
+    expect(merged.total_hrs).toBe(12);
+  });
+
   it('appends to files list without duplicates', () => {
     let { store } = mergeRowsIntoRig({}, 204, [pdfRow('15-Mar-2026')], 'Excel', 'file-a.xlsx');
     ({ store } = mergeRowsIntoRig(store, 204, [pdfRow('16-Mar-2026')], 'Excel', 'file-a.xlsx'));

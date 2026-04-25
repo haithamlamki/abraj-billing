@@ -27,10 +27,25 @@ export function autoMapHeaders(headerCells) {
     if (/(special|upgrade)/i.test(tNoSpace) && !/obm/.test(tNoSpace) && map.special === undefined) { map.special = i; continue; }
     if (/(forcemaj|forcemajor|sbmrate)/i.test(tNoSpace) && map.force_maj === undefined) { map.force_maj = i; continue; }
     if (/zero/i.test(tNoSpace) && !/obm/.test(tNoSpace) && map.zero_rate === undefined) { map.zero_rate = i; continue; }
-    if (/(standby|stacking)/i.test(tNoSpace) && map.standby === undefined) { map.standby = i; continue; }
-    if (/repairrate/i.test(tNoSpace) && map.repair === undefined) { map.repair = i; continue; }
-    if (/(rigmove|movestat|^move)/i.test(tNoSpace) || /(rig\s*move|move\s*stat|rig\s*moves)/i.test(t)) {
-      map.rig_move = i;
+    // "stand" alone is the truncated "STANDBY" header seen in some PDFs.
+    if (/(standby|stacking|^stand$)/i.test(tNoSpace) && map.standby === undefined) { map.standby = i; continue; }
+    // BP/KZN and Medco/YASMEEN PDFs collapse all maintenance-style downtime
+    // into one repair bucket. Per ops team: EQUIPMENT, PREVENTIVE, and the
+    // typo'd RAPAIR all map to repair (not breakdown). When more than one of
+    // these columns appears in the same file (Rig 305: PREVENTIVE + RAPAIR),
+    // accumulate all source indices so extract.js sums them.
+    if (/(repairrate|^repair$|^rapair$|preventive|equipment)/i.test(tNoSpace)) {
+      if (map.repair === undefined) map.repair = i;
+      else if (Array.isArray(map.repair)) map.repair.push(i);
+      else map.repair = [map.repair, i];
+      continue;
+    }
+    // Per ops team for Rig 305: MOVING and RIG MOVE both belong to rig_move.
+    // Accumulate source columns (same pattern as repair) so extract.js sums them.
+    if (/(rigmove|movestat|^move|^moving$)/i.test(tNoSpace) || /(rig\s*move|move\s*stat|rig\s*moves)/i.test(t)) {
+      if (map.rig_move === undefined) map.rig_move = i;
+      else if (Array.isArray(map.rig_move)) map.rig_move.push(i);
+      else map.rig_move = [map.rig_move, i];
       continue;
     }
 
@@ -46,10 +61,26 @@ export function autoMapHeaders(headerCells) {
     if (/obm/i.test(t) && /spe/.test(t)) { map.obm_spe = i; continue; }
     if (/obm/i.test(t) && /zero/.test(t)) { map.obm_zero = i; continue; }
 
-    if (/(operations?\s*summary|^operations?$|^description$)/i.test(raw)) { map.operation = i; continue; }
+    // Note: bare "OPERATION" / "OPERATIONS" is ambiguous (could be hours or
+    // text). Resolved in the post-pass below.
+    if (/(operations?\s*summary|^description$)/i.test(raw)) { map.operation = i; continue; }
 
     if (/(total\s*hours?\s*repair|daily\s*repair|hours?\s*repair)/i.test(t)) { map.total_hrs_repair = i; continue; }
   }
+
+  // Post-pass for bare "OPERATION" / "OPERATIONS" columns. The main loop skips
+  // these because they're ambiguous (Medco/YASMEEN PDFs use OPERATION for
+  // numeric hours and DESCRIPTION for text; standard Abraj sheets use
+  // "Operation" as the text column).
+  //   - if map.operating is unset and there's an OPERATION column → numeric hours
+  //   - if map.operation (text) is unset and an OPERATION column survived → text fallback
+  for (let i = 0; i < headerCells.length; i++) {
+    const t = safeStr(headerCells[i]).toLowerCase().trim();
+    if (!/^operations?$/.test(t)) continue;
+    if (map.operating === undefined) { map.operating = i; }
+    else if (map.operation === undefined) { map.operation = i; }
+  }
+
   return map;
 }
 

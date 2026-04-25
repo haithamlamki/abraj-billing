@@ -33,6 +33,26 @@ describe('extractRows', () => {
     expect(rows[1].reduced).toBe(4);
   });
 
+  it('sums multiple source columns when map.repair is an array (BP/KZN PREVENTIVE+RAPAIR)', () => {
+    // headers: DATE | OPERATING | PREVENTIVE | RAPAIR | TOTAL | DESCRIPTION
+    const rawData = [
+      ['DATE', 'OPERATING', 'PREVENTIVE', 'RAPAIR', 'TOTAL', 'DESCRIPTION'],
+      ['15-Mar-2026', 20, 1.5, 2.5, 24, 'Drilling'],
+    ];
+    const { rows } = extractRows({
+      rawData,
+      formatted: rawData,
+      headerRow: 0,
+      map: { date: 0, operating: 1, repair: [2, 3], total_hrs: 4, operation: 5 },
+      billingYear: 2026,
+      billingMonth: 3,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].operating).toBe(20);
+    expect(rows[0].repair).toBe(4);   // 1.5 + 2.5
+    expect(rows[0].total_hrs).toBe(24);  // 20 + 4
+  });
+
   it('recomputes total_hrs from category sums, not the file column', () => {
     // File says 18h total but categories actually sum to 20. Output should be 20.
     // (file totals > 24.5 are treated as a summary row and break extraction — tested separately)

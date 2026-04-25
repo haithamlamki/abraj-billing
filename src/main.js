@@ -1,8 +1,8 @@
 import {
-  RIGS, RIG_CUST, CUST_COLORS, MONTHS, HR_KEYS,
+  RIGS, RIG_CUST, CUST_COLORS, CUSTOMERS, MONTHS, HR_KEYS,
   TARGET_COLS, MAP_GROUPS,
 } from './constants.js';
-import { safeNum, safeStr, fmtNum } from './utils.js';
+import { safeNum, safeStr, fmtNum, escapeHtml } from './utils.js';
 import { toDateStr, parseDate, getDaysInMonth, getMonthName } from './dates.js';
 import { autoMapHeaders, detectUnnamedTextColumns } from './mapping.js';
 import { findHeaderRow, isFooterRow, classifyRows, detectMeta } from './detection.js';
@@ -17,9 +17,11 @@ import { AUTO_ACCEPT_THRESHOLD, evaluateIssues } from './review.js';
 /* global XLSX, pdfjsLib, Chart */
 
 // ============================================
-// PDF.js worker — run in main thread so file:// works
+// PDF.js worker — disable only when running from file:// (workers can't load
+// cross-origin scripts from a file URL). Over HTTP/HTTPS, let pdf.js spin up
+// its own worker so PDF parsing doesn't block the main thread.
 // ============================================
-if (typeof pdfjsLib !== 'undefined') {
+if (typeof pdfjsLib !== 'undefined' && typeof location !== 'undefined' && location.protocol === 'file:') {
   pdfjsLib.GlobalWorkerOptions.workerSrc = '';
   pdfjsLib.disableWorker = true;
 }
@@ -86,6 +88,12 @@ function updateMonthYearUI() {
   const yr = document.getElementById('yearInput');
   if (sel) sel.value = billingMonth;
   if (yr) yr.value = billingYear;
+}
+
+function populateCustomerOptions() {
+  const sel = document.getElementById('metaCust');
+  if (!sel) return;
+  sel.innerHTML = CUSTOMERS.map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
 function onMonthYearChange() {
@@ -234,9 +242,31 @@ async function processNextFile() {
   const file = fileQueue.shift();
   currentFileName = file.name;
   const ext = file.name.split('.').pop().toLowerCase();
+
+  // Filenames like "BST 384 Move Feb Rig110.pdf" are rig-move reports, not
+  // daily billing rows. Skip them silently rather than emit a "0 rows" review
+  // card. Same for Docusign and pure ticket files. Keep combined files like
+  // "RIG204 Feb Billing & Ticket.pdf" — those have real billing rows.
+  const fname = file.name;
+  const isMove = /\bmove\b/i.test(fname);
+  const isDocusign = /docusign/i.test(fname);
+  const isTicketOnly = /\bticket\b/i.test(fname) && !/billing/i.test(fname);
+  if (isMove || isDocusign || isTicketOnly) {
+    log(`  Skipping non-billing file: ${fname}`, 'info');
+    if (batchMode.active) {
+      batchMode.processed++;
+      batchMode.autoAccepted++; // count as "handled" so the batch progresses
+      renderBatchBanner();
+    }
+    await processNextFile();
+    return;
+  }
+
   const buf = await file.arrayBuffer();
 
-  const rigMatch = file.name.match(/^(\d{3})/);
+  // Try leading 3 digits first (e.g. "204_March_2026.xlsx"), then "Rig104" /
+  // "RIG 104" anywhere in the name (real-world Abraj billing files).
+  const rigMatch = file.name.match(/^(\d{3})/) || file.name.match(/rig[\s_-]*(\d{3})/i);
   currentRigNum = rigMatch ? parseInt(rigMatch[1]) : null;
 
   log(`Processing: ${file.name} (${fileQueue.length} remaining in queue)`, 'info');
@@ -402,9 +432,19 @@ async function parsePDF(buf) {
       const tc = await page.getTextContent();
       const textItems = tc.items || [];
 
-      if (textItems.length === 0) {
-        // Scanned page — fall back to OCR.
-        log(`  Page ${p}: no embedded text, running OCR…`, 'info');
+      // Heuristic: detect "scanned" PDFs that pdf.js still emits some text for.
+      //  - completely empty → certainly scanned
+      //  - very sparse (< 30 items) AND average token < 3 chars → likely scanned/forms
+      //  - very few alphanumeric "real" tokens → custom-encoded font (glyph soup)
+      const trimmed = textItems.map(it => (it.str || '').trim()).filter(Boolean);
+      const realTokens = trimmed.filter(t => /[a-zA-Z0-9]{3,}/.test(t));
+      const avgLen = trimmed.length ? trimmed.reduce((s, t) => s + t.length, 0) / trimmed.length : 0;
+      const looksScanned = textItems.length === 0
+        || (trimmed.length < 30 && avgLen < 3)
+        || (trimmed.length > 0 && realTokens.length < Math.max(5, trimmed.length * 0.1));
+
+      if (looksScanned) {
+        log(`  Page ${p}: ${textItems.length === 0 ? 'no embedded text' : `${trimmed.length} weak tokens (${realTokens.length} real)`}, running OCR…`, 'info');
         const ocrItems = await ocrPageToItems(page, p);
         allItems.push(...ocrItems);
         ocredPages++;
@@ -760,6 +800,10 @@ function extractFromSheet({ sheetName, rawData, formatted, fileName, filenameRig
       }
     }
 
+    // Structured log for inventory tooling — captures the headers seen and the
+    // resolved mapping for every silent extraction.
+    log(`Silent map [${fileName}]: headers=[${hRow.join(' | ')}] map=${JSON.stringify(map)}`, 'info');
+
     const extract = extractRows({
       rawData,
       formatted,
@@ -895,7 +939,6 @@ async function autoProcessCurrentFile() {
   }
 
   // Add the file to each affected rig's files[] list + persist + refresh UI.
-  for (const card of reviewQueue) { /* no-op; review cards haven't merged yet */ }
   for (const rig of RIGS) {
     const store = rigStore[rig];
     if (!store) continue;
@@ -945,15 +988,15 @@ function renderReviewQueue() {
   el.innerHTML = reviewQueue.map(c => `
     <div class="card" style="padding:12px 14px;margin-bottom:6px;border-color:var(--orange)">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-        <strong style="color:var(--orange);font-size:.85rem">${c.fileName}</strong>
-        <span style="color:var(--text3);font-size:.72rem">${c.sheetName ? '[' + c.sheetName + ']' : ''}</span>
-        <span style="color:var(--text2);font-size:.72rem">Rig ${c.rig ?? '?'} · ${c.meta.customer || '—'} · ${c.confidence ? c.confidence.score + '%' : ''}</span>
+        <strong style="color:var(--orange);font-size:.85rem">${escapeHtml(c.fileName)}</strong>
+        <span style="color:var(--text3);font-size:.72rem">${c.sheetName ? '[' + escapeHtml(c.sheetName) + ']' : ''}</span>
+        <span style="color:var(--text2);font-size:.72rem">Rig ${c.rig ?? '?'} · ${escapeHtml(c.meta.customer) || '—'} · ${c.confidence ? c.confidence.score + '%' : ''}</span>
         <span style="margin-left:auto;color:var(--text3);font-size:.68rem">${c.rows.length} rows extracted</span>
       </div>
       <div style="font-size:.74rem;color:var(--text2);margin-bottom:8px">
         <strong style="color:var(--red)">Issues:</strong>
         <ul style="margin:2px 0 0 18px;padding:0">
-          ${c.issues.map(i => `<li>${i}</li>`).join('')}
+          ${c.issues.map(i => `<li>${escapeHtml(i)}</li>`).join('')}
         </ul>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1400,8 +1443,8 @@ function showResult(rigNum, cust, well, contract, po, rows) {
 
   document.getElementById('resultSummary').innerHTML = `
     <div class="sum-item"><span class="sum-label">Rig</span><span class="sum-val" style="color:var(--cyan)">${rigNum}</span></div>
-    <div class="sum-item"><span class="sum-label">Customer</span><span class="sum-val">${cust || '—'}</span></div>
-    <div class="sum-item" style="flex:1;min-width:120px"><span class="sum-label">Well</span><span class="sum-val" style="font-size:.85rem">${well || '—'}</span></div>
+    <div class="sum-item"><span class="sum-label">Customer</span><span class="sum-val">${escapeHtml(cust) || '—'}</span></div>
+    <div class="sum-item" style="flex:1;min-width:120px"><span class="sum-label">Well</span><span class="sum-val" style="font-size:.85rem">${escapeHtml(well) || '—'}</span></div>
     <div class="sum-item"><span class="sum-label">Days</span><span class="sum-val ${pctCls}">${rows.length} / ${daysInMonth}</span></div>
     <div class="sum-item"><span class="sum-label">Complete</span><span class="sum-val ${pctCls}">${pct}%</span></div>
     ${partial > 0 ? `<div class="sum-item"><span class="sum-label">Partial</span><span class="sum-val warn">${partial}</span></div>` : ''}
@@ -1491,9 +1534,9 @@ function showResult(rigNum, cust, well, contract, po, rows) {
       html += `<td contenteditable="true" class="editable" data-key="${k}" data-row-idx="${i}">${v}</td>`;
     }
 
-    html += `<td contenteditable="true" class="editable text-cell" data-key="operation" data-row-idx="${i}" style="min-width:280px;max-width:420px;white-space:normal;line-height:1.3" title="${(row.operation || '').replace(/"/g, '&quot;')}">${row.operation || ''}</td>`;
+    html += `<td contenteditable="true" class="editable text-cell" data-key="operation" data-row-idx="${i}" style="min-width:280px;max-width:420px;white-space:normal;line-height:1.3" title="${escapeHtml(row.operation)}">${escapeHtml(row.operation)}</td>`;
     html += `<td contenteditable="true" class="editable" data-key="total_hrs_repair" data-row-idx="${i}">${row.total_hrs_repair || 0}</td>`;
-    html += `<td contenteditable="true" class="editable text-cell" data-key="remarks" data-row-idx="${i}">${row.remarks || ''}</td>`;
+    html += `<td contenteditable="true" class="editable text-cell" data-key="remarks" data-row-idx="${i}">${escapeHtml(row.remarks)}</td>`;
     html += '</tr>';
   });
 
@@ -1783,6 +1826,9 @@ function buildRigList() {
     const div = document.createElement('div');
     div.className = 'rig-item' + (isComplete ? ' complete' : isPartial ? ' partial has-data' : hasData ? ' has-data' : '');
     div.id = `ri-${rig}`;
+    div.setAttribute('role', 'button');
+    div.setAttribute('tabindex', '0');
+    div.setAttribute('aria-label', `Rig ${rig} (${cust}) — ${dayCount} of ${days} days`);
     div.innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:1px">
         <span class="r-num">${rig}</span>
@@ -1792,6 +1838,9 @@ function buildRigList() {
       ${tl.html}
     `;
     div.addEventListener('click', () => selectRig(rig));
+    div.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRig(rig); }
+    });
     el.appendChild(div);
   }
 }
@@ -1850,9 +1899,15 @@ function updateFleetOverview() {
     else if (r.submittedDays > 0) { bg = 'rgba(245,158,11,.15)'; color = 'var(--orange)'; }
     const cell = document.createElement('div');
     cell.style.cssText = `background:${bg};border-radius:3px;padding:2px 4px;text-align:center;cursor:pointer;flex:1;min-width:0`;
+    cell.setAttribute('role', 'button');
+    cell.setAttribute('tabindex', '0');
+    cell.setAttribute('aria-label', `Rig ${r.rig} — ${r.status}, ${r.submittedDays} of ${qc.daysInMonth} days`);
     cell.innerHTML = `<div style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.65rem;color:${color}">${r.rig}</div><div style="font-size:.45rem;color:var(--text3)">${r.submittedDays}/${qc.daysInMonth}</div>`;
     cell.title = `Rig ${r.rig}: ${r.status}; ${r.missingDays} missing, ${r.partialDays} partial, ${r.missingHrs.toFixed(1)} missing hrs`;
     cell.addEventListener('click', () => selectRig(r.rig));
+    cell.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRig(r.rig); }
+    });
     grid.appendChild(cell);
   }
   const summary = document.getElementById('fleetSummary');
@@ -2003,7 +2058,7 @@ function clearAll() {
 // ============================================
 // PERSISTENCE
 // ============================================
-function autoSave() {
+function autoSaveNow() {
   try {
     const data = {};
     for (const rig of RIGS) {
@@ -2029,6 +2084,17 @@ function autoSave() {
   } catch (e) {
     log('Auto-save failed: ' + e.message, 'err');
   }
+}
+
+// Debounced wrapper: coalesces bursts of writes from batch processing into a
+// single localStorage hit. manualSaveSession() bypasses this and writes immediately.
+let autoSaveHandle = null;
+function autoSave() {
+  if (autoSaveHandle) clearTimeout(autoSaveHandle);
+  autoSaveHandle = setTimeout(() => {
+    autoSaveHandle = null;
+    autoSaveNow();
+  }, 300);
 }
 
 function autoLoad() {
@@ -2068,7 +2134,11 @@ function clearStorage() {
   log('Browser storage cleared', 'info');
 }
 
-function manualSaveSession() { autoSave(); alert('Session saved in this browser.'); }
+function manualSaveSession() {
+  if (autoSaveHandle) { clearTimeout(autoSaveHandle); autoSaveHandle = null; }
+  autoSaveNow();
+  alert('Session saved in this browser.');
+}
 function manualLoadSession() {
   const ok = autoLoad();
   renderExecutiveSummary();
@@ -2214,20 +2284,20 @@ function renderSummaryTables(model) {
   if (rigBody) {
     rigBody.innerHTML = model.rigRows.map(r => {
       const cls = r.status === 'Complete' ? 'qc-ok' : (r.status === 'Partial' ? 'qc-warn' : 'qc-bad');
-      return `<tr><td><strong>${r.rig}</strong></td><td>${r.customer}</td><td>${r.days}/${model.daysInMonth}</td><td class="num">${fmtNum(r.total, 1)}</td><td class="num" style="color:${r.missingHrs > 0 ? 'var(--red)' : 'var(--green)'}">${fmtNum(r.missingHrs, 1)}</td><td><span class="qc-badge ${cls}">${r.status}</span></td></tr>`;
+      return `<tr><td><strong>${r.rig}</strong></td><td>${escapeHtml(r.customer)}</td><td>${r.days}/${model.daysInMonth}</td><td class="num">${fmtNum(r.total, 1)}</td><td class="num" style="color:${r.missingHrs > 0 ? 'var(--red)' : 'var(--green)'}">${fmtNum(r.missingHrs, 1)}</td><td><span class="qc-badge ${cls}">${escapeHtml(r.status)}</span></td></tr>`;
     }).join('');
   }
   const custBody = document.getElementById('summaryCustomerTable');
   if (custBody) {
     custBody.innerHTML = model.customerRows.map(c =>
-      `<tr><td><strong>${c.customer}</strong></td><td class="num">${c.rigs}</td><td class="num">${fmtNum(c.operating, 1)}</td><td class="num">${fmtNum(c.total, 1)}</td><td class="num" style="color:${c.missingHrs > 0 ? 'var(--red)' : 'var(--green)'}">${fmtNum(c.missingHrs, 1)}</td></tr>`
+      `<tr><td><strong>${escapeHtml(c.customer)}</strong></td><td class="num">${c.rigs}</td><td class="num">${fmtNum(c.operating, 1)}</td><td class="num">${fmtNum(c.total, 1)}</td><td class="num" style="color:${c.missingHrs > 0 ? 'var(--red)' : 'var(--green)'}">${fmtNum(c.missingHrs, 1)}</td></tr>`
     ).join('');
   }
   const exBody = document.getElementById('summaryExceptionTable');
   if (exBody) {
     const ex = model.qc.exceptions.slice(0, 1200);
     exBody.innerHTML = ex.map(e =>
-      `<tr class="${e.severity === 'critical' ? 'bad-row' : 'conf-row'}"><td>${e.rig}</td><td>${e.customer}</td><td>${e.date}</td><td class="num">${fmtNum(e.submitted, 1)}</td><td class="num">${fmtNum(e.missing, 1)}</td><td><span class="qc-badge ${e.severity === 'critical' ? 'qc-bad' : 'qc-warn'}">${e.issue}</span></td><td>${e.action}</td></tr>`
+      `<tr class="${e.severity === 'critical' ? 'bad-row' : 'conf-row'}"><td>${e.rig}</td><td>${escapeHtml(e.customer)}</td><td>${escapeHtml(e.date)}</td><td class="num">${fmtNum(e.submitted, 1)}</td><td class="num">${fmtNum(e.missing, 1)}</td><td><span class="qc-badge ${e.severity === 'critical' ? 'qc-bad' : 'qc-warn'}">${escapeHtml(e.issue)}</span></td><td>${escapeHtml(e.action)}</td></tr>`
     ).join('') + (model.qc.exceptions.length > 1200
       ? `<tr><td colspan="7" style="text-align:center;color:var(--text3)">Showing first 1,200 of ${model.qc.exceptions.length} exceptions</td></tr>`
       : '');
@@ -2240,7 +2310,7 @@ function renderSummaryTables(model) {
       if (r.total_hrs > 24.5) { cls = 'qc-bad'; label = 'Over 24h'; }
       else if (r.qc_status === 'Complete') { cls = 'qc-ok'; label = 'Complete'; }
       else if (r.qc_status === 'Partial') { cls = 'qc-warn'; label = `Partial -${fmtNum(r.missing_hrs, 1)}h`; }
-      return `<tr><td>${r.rig}</td><td>${r.customer}</td><td>${r.well || ''}</td><td>${r.date}</td><td class="num">${fmtNum(r.operating, 1)}</td><td class="num">${fmtNum(r.reduced, 1)}</td><td class="num">${fmtNum(r.breakdown, 1)}</td><td class="num">${fmtNum(r.rig_move, 1)}</td><td class="num">${fmtNum(r.total_hrs, 1)}</td><td><span class="qc-badge ${cls}">${label}</span></td></tr>`;
+      return `<tr><td>${r.rig}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.well)}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmtNum(r.operating, 1)}</td><td class="num">${fmtNum(r.reduced, 1)}</td><td class="num">${fmtNum(r.breakdown, 1)}</td><td class="num">${fmtNum(r.rig_move, 1)}</td><td class="num">${fmtNum(r.total_hrs, 1)}</td><td><span class="qc-badge ${cls}">${label}</span></td></tr>`;
     }).join('') + (model.records.length > 1000
       ? `<tr><td colspan="10" style="text-align:center;color:var(--text3)">Showing first 1,000 of ${model.records.length} records</td></tr>`
       : '');
@@ -2351,6 +2421,13 @@ function setupDrop() {
     zone.classList.remove('dragover');
     await handleFiles(e.dataTransfer.files);
   });
+  // Label semantics handle click; add keyboard activation for Space/Enter.
+  zone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      input.click();
+    }
+  });
   input.addEventListener('change', async e => {
     await handleFiles(e.target.files);
     input.value = '';
@@ -2369,12 +2446,16 @@ Object.assign(window, {
   extractAllSheets, applyMapping, goBackToPreview,
   acceptAllRemaining, acceptData,
   manualSaveSession, manualLoadSession, clearAll,
+  // Debug / test introspection — read-only handle to internal state.
+  __getRigStore: () => rigStore,
+  __getReviewQueue: () => reviewQueue,
 });
 
 // ============================================
 // INIT
 // ============================================
 updateMonthYearUI();
+populateCustomerOptions();
 buildRigList();
 setupDrop();
 setStep(1);
@@ -2383,17 +2464,5 @@ log('Ready. Drop a file to start.', 'info');
 if (!autoLoad()) {
   log('No saved data in browser storage', 'info');
 }
-
-// Try to auto-fetch consolidated file
-const conFileName = `${getMonthName(billingMonth).toUpperCase()}_${billingYear}_ALL_RIGS.xlsx`;
-fetch(conFileName)
-  .then(r => { if (r.ok) return r.arrayBuffer(); throw new Error('not found'); })
-  .then(buf => loadConsolidated(buf))
-  .catch(() => {
-    fetch('MARCH_2026_ALL_RIGS.xlsx')
-      .then(r => { if (r.ok) return r.arrayBuffer(); throw new Error('not found'); })
-      .then(buf => loadConsolidated(buf))
-      .catch(() => log('No existing consolidated file found — drop files to start', 'info'));
-  });
 
 renderExecutiveSummary();

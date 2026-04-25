@@ -123,6 +123,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
 ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
 
+/* Keyboard focus ring for interactive non-button elements (rig items, fleet cells, drop zone) */
+.rig-item:focus-visible,#fleetGrid > div:focus-visible,.drop-zone:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
 /* ===== Simplified Step 2 & 3 styling ===== */
 .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px}
 .card-title{font-size:.78rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
@@ -198,7 +201,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </select>
     <input id="yearInput" type="number" class="btn btn-sm" style="background:var(--bg3);color:var(--text);width:70px;text-align:center" value="2026" min="2020" max="2035" onchange="onMonthYearChange()">
     <div class="view-tabs"><button id="tabExtraction" class="view-tab active" onclick="showAppView('extraction')">Upload / Extraction</button><button id="tabSummary" class="view-tab" onclick="showAppView('summary')">Executive Summary</button></div>
-    <button class="btn btn-primary btn-sm" onclick="document.getElementById('fileInput').click()">&#8682; Upload Files</button>
+    <label for="fileInput" class="btn btn-primary btn-sm" style="cursor:pointer">&#8682; Upload Files</label>
     <button class="btn btn-sm" onclick="document.getElementById('logBox').style.display=document.getElementById('logBox').style.display==='none'?'block':'none'">Log</button>
     <button class="btn btn-sm" onclick="exportExceptionReport()">QC Exceptions</button>
     <button class="btn btn-sm" onclick="exportJSON()">Export JSON</button>
@@ -237,12 +240,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
   <!-- STEP 1: DROP -->
   <div id="panelDrop">
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-      <div style="font-size:2rem;margin-bottom:6px">&#128203;</div>
+    <label for="fileInput" class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Drop billing file here or press Enter to browse">
+      <div style="font-size:2rem;margin-bottom:6px" aria-hidden="true">&#128203;</div>
       <div style="font-size:.9rem;color:var(--text2)">Drop billing file here or click to browse</div>
       <div style="font-size:.75rem;color:var(--text3);margin-top:4px">.xlsx, .xls, .pdf &mdash; Rig auto-detected from filename</div>
-      <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.pdf">
-    </div>
+    </label>
+    <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.pdf" style="display:none">
   </div>
 
   <!-- STEP 2: PREVIEW + MAPPING (simplified) -->
@@ -258,9 +261,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="info-pills">
         <div class="pill pill-rig"><label>Rig #</label><input id="metaRig" placeholder="—"></div>
         <div class="pill"><label>Customer</label>
-          <select id="metaCust">
-            <option>PDO</option><option>OXY</option><option>OQ</option><option>ARA</option><option>Medco</option><option>BP</option>
-          </select>
+          <select id="metaCust"></select>
         </div>
         <div class="pill" style="flex:1;min-width:160px"><label>Well</label><input id="metaWell" placeholder="—"></div>
         <div class="pill"><label>Contract</label><input id="metaContract" placeholder="—"></div>

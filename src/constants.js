@@ -24,6 +24,8 @@ export const CUST_COLORS = {
   BP: '#ec4899',
 };
 
+export const CUSTOMERS = Object.keys(CUST_COLORS);
+
 export const HR_KEYS = [
   'operating', 'reduced', 'breakdown', 'special', 'force_maj',
   'zero_rate', 'standby', 'repair', 'rig_move',

@@ -38,6 +38,42 @@ describe('autoMapHeaders', () => {
     expect(map.reduced).toBe(2);
   });
 
+  it('maps Rig 305 full BP schema — MOVING + RIG MOVE both → rig_move (sum)', () => {
+    const headers = ['DATE', 'MOVING', 'OPERATING', 'PREVENTIVE', 'RAPAIR', 'RIG MOVE-', 'STANDBY', 'ZERO', 'TOTAL', 'DESCRIPTION'];
+    const map = autoMapHeaders(headers);
+    expect(map.date).toBe(0);
+    expect(map.rig_move).toEqual([1, 5]); // MOVING (col 1) + RIG MOVE- (col 5)
+    expect(map.operating).toBe(2);
+    expect(map.repair).toEqual([3, 4]);   // PREVENTIVE + RAPAIR
+    expect(map.standby).toBe(6);
+    expect(map.zero_rate).toBe(7);
+    expect(map.total_hrs).toBe(8);
+    expect(map.operation).toBe(9);
+  });
+
+  it('maps BP/KZN PDF schema — PREVENTIVE + RAPAIR both → repair (sum)', () => {
+    const headers = ['DATE', 'OPERATING', 'PREVENTIVE', 'RAPAIR', 'STANDBY', 'TOTAL', 'DESCRIPTION'];
+    const map = autoMapHeaders(headers);
+    expect(map.date).toBe(0);
+    expect(map.operating).toBe(1);
+    // Both PREVENTIVE (col 2) and RAPAIR (col 3) collapse into repair
+    expect(map.repair).toEqual([2, 3]);
+    expect(map.standby).toBe(4);
+    expect(map.total_hrs).toBe(5);
+    expect(map.operation).toBe(6);
+  });
+
+  it('maps Medco/YASMEEN schema — EQUIPMENT → repair, OPERATION → operating', () => {
+    const headers = ['DATE', 'EQUIPMENT', 'OPERATION', 'STAND', 'TOTAL', 'DESCRIPTION'];
+    const map = autoMapHeaders(headers);
+    expect(map.date).toBe(0);
+    expect(map.repair).toBe(1);        // EQUIPMENT → repair (per ops team)
+    expect(map.operating).toBe(2);     // OPERATION (numeric, post-pass swap)
+    expect(map.standby).toBe(3);       // STAND → standby
+    expect(map.total_hrs).toBe(4);
+    expect(map.operation).toBe(5);     // DESCRIPTION → operation (text)
+  });
+
   it('does not confuse "Operations Summary" with operating', () => {
     const headers = ['Date', 'Operations Summary', 'Operating'];
     const map = autoMapHeaders(headers);
