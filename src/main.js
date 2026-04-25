@@ -34,6 +34,7 @@ import {
 import {
   ensureReviewQueueContainer, buildReviewCardHTML, renderReviewQueue as renderReviewQueueDOM,
 } from './views/reviewQueue.js';
+import { renderConflicts as renderConflictsDOM } from './views/conflicts.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -1467,31 +1468,8 @@ function showConflicts(rigNum, conflicts) {
   LAST_CONFLICTS.rigNum = rigNum;
   LAST_CONFLICTS.conflicts = conflicts;
   setStep(3);
-  let html = `<div style="padding:16px">
-    <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:14px;margin-bottom:16px">
-      <strong style="color:var(--red);font-size:.95rem">Hours Conflict Detected — ${conflicts.length} day(s)</strong>
-      <div style="color:var(--text2);font-size:.82rem;margin-top:4px">Choose how to resolve same-rig/same-date differences. Recommended default: use PDF if it is the signed final billing document.</div>
-    </div>
-    <table class="result-table" style="min-width:auto"><thead><tr><th>Date</th><th>Existing Source</th><th>Existing Hrs</th><th>New Source</th><th>New Hrs</th><th>Diff</th><th>Current Merged</th><th>Recommended</th></tr></thead><tbody>`;
-  for (const c of conflicts) {
-    const diff = (safeNum(c.newTotal) - safeNum(c.existingTotal)).toFixed(1);
-    const merged = getRig(rigStore, rigNum)?.rows.find(r => r.date === c.date);
-    const mergedTotal = merged ? rowTotal(merged) : 0;
-    const rec = (String(c.newSource || '').includes('PDF') || String(c.existingSource || '').includes('PDF')) ? 'Use PDF' : 'Manual Review';
-    html += `<tr class="conf-row"><td style="white-space:nowrap">${c.date}</td><td>${c.existingSource || ''}</td><td class="num">${fmtNum(c.existingTotal, 1)}h</td><td>${c.newSource || ''}</td><td class="num">${fmtNum(c.newTotal, 1)}h</td><td class="num" style="color:var(--red)">${diff > 0 ? '+' : ''}${diff}h</td><td class="num" style="font-weight:700;color:var(--cyan)">${fmtNum(mergedTotal, 1)}h</td><td>${rec}</td></tr>`;
-  }
-  html += `</tbody></table><div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
-    <button class="btn btn-sm" data-conflict-action="manual">Manual Edit</button>
-    <button class="btn btn-sm" data-conflict-action="excel">Use Excel</button>
-    <button class="btn btn-sm btn-green" data-conflict-action="pdf">Use PDF</button>
-    <button class="btn btn-primary btn-sm" data-conflict-action="merge">Keep Current Merge</button>
-  </div></div>`;
-
-  const scroll = document.getElementById('resultScroll');
-  scroll.innerHTML = html;
-  scroll.querySelectorAll('[data-conflict-action]').forEach(btn => {
-    btn.addEventListener('click', () => resolveAllConflicts(rigNum, btn.dataset.conflictAction));
-  });
+  const entry = getRig(rigStore, rigNum);
+  renderConflictsDOM(rigNum, conflicts, entry ? entry.rows : [], strategy => resolveAllConflicts(rigNum, strategy));
   document.getElementById('resultTitle').textContent = `Rig ${rigNum} — Resolve Conflicts`;
   document.getElementById('resultWarnings').innerHTML = '';
 }
