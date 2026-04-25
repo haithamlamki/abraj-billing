@@ -4,7 +4,10 @@ import {
 } from './constants.js';
 import { safeNum, safeStr, fmtNum, escapeHtml } from './utils.js';
 import { getDaysInMonth, getMonthName } from './dates.js';
-import { autoMapHeaders, detectUnnamedTextColumns } from './mapping.js';
+import {
+  autoMapHeaders, detectUnnamedTextColumns,
+  normalizeHeaderRow, applyAboveRowHints,
+} from './mapping.js';
 import { findHeaderRow, isFooterRow, classifyRows, detectMeta } from './detection.js';
 import { joinText, rowTotal, mergeRowsIntoRig } from './merge.js';
 import { extractRows } from './extract.js';
@@ -406,18 +409,7 @@ async function attemptAutoAccept() {
   }
 
   // Build mapping from the DOM (autoMap already populated it).
-  const map = {};
-  for (const tc of TARGET_COLS) {
-    const sel = document.getElementById(`sel-${tc.key}`);
-    if (!sel) continue;
-    const v = parseInt(sel.value);
-    if (v >= 0) map[tc.key] = v;
-  }
-  const totalSel = document.getElementById('sel-total_hrs');
-  if (totalSel) {
-    const v = parseInt(totalSel.value);
-    if (v >= 0) map.total_hrs = v;
-  }
+  const map = readMappingFromDOM();
   currentMapping = map;
 
   // Extract rows using the pure helper.
@@ -479,7 +471,7 @@ async function attemptAutoAccept() {
   renderBatchBanner();
   log(`  ✓ ${currentFileName}: Rig ${currentRigNum} auto-accepted (+${result.newDays} new / ${result.mergedDays} merged, confidence ${confidence.score}%)`, 'ok');
 
-  updateRigList();
+  buildRigList();
   updateStats();
   autoSave();
 
@@ -609,7 +601,7 @@ async function autoProcessCurrentFile() {
     if (!store) continue;
     if (store.rows.length && !store.files.includes(currentFileName)) store.files.push(currentFileName);
   }
-  updateRigList();
+  buildRigList();
   updateStats();
   autoSave();
 
@@ -653,7 +645,7 @@ function handleReviewAction(action, id) {
     }
     reviewQueue.splice(idx, 1);
     renderReviewQueue();
-    updateRigList();
+    buildRigList();
     updateStats();
     autoSave();
     return;
@@ -780,7 +772,7 @@ function extractAllSheets() {
 
   addFileToRig(rigStore, rigNum, currentFileName);
 
-  updateRigList();
+  buildRigList();
   updateStats();
   autoSave();
   log(`All sheets done: +${totalNew} new, ${totalMerged} merged. Rig ${rigNum} total: ${rigStore[rigNum].rows.length} days.`, 'ok');
@@ -871,15 +863,7 @@ function autoMap() {
 
   const fmtRow = (data && data.length ? data : currentRawData)[currentHeaderRow] || [];
   const rawRow = currentRawData[currentHeaderRow] || [];
-  const hRow = [];
-  const maxLen = Math.max(fmtRow.length, rawRow.length);
-  for (let i = 0; i < maxLen; i++) {
-    const fv = safeStr(fmtRow[i]).replace(/\n/g, ' ');
-    const rv = safeStr(rawRow[i]).replace(/\n/g, ' ');
-    if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(fv) && rv && !/^\d/.test(rv)) hRow.push(rv);
-    else if (!fv && rv) hRow.push(rv);
-    else hRow.push(fv || rv);
-  }
+  const hRow = normalizeHeaderRow(fmtRow, rawRow);
 
   const detected = autoMapHeaders(hRow);
   detectUnnamedTextColumns(detected, useData, currentHeaderRow);
@@ -889,16 +873,7 @@ function autoMap() {
 
   if (currentHeaderRow > 0) {
     const prevRow = (useData[currentHeaderRow - 1] || []).map(v => safeStr(v));
-    for (let c = 0; c < prevRow.length; c++) {
-      if (prevRow[c] && hRow[c]) {
-        const combined = (prevRow[c] + ' ' + hRow[c]).toLowerCase();
-        if (/(total\s*h|total\s*hrs)/.test(combined) && !detected.total_hrs) {
-          detected.total_hrs = c;
-          log(`  Combined header: Col ${c + 1} = "${prevRow[c]} ${hRow[c]}" -> total_hrs`, 'info');
-        }
-        if (/operation/i.test(combined) && !detected.operation) detected.operation = c;
-      }
-    }
+    applyAboveRowHints(detected, prevRow, hRow, log);
   }
 
   for (const tc of TARGET_COLS) {
@@ -928,7 +903,12 @@ function updateMapStatus(key) {
 // ============================================
 // APPLY MAPPING → EXTRACT
 // ============================================
-function applyMapping() {
+
+/**
+ * Read the current column-mapping from the DOM selects and return a map object.
+ * Shared by applyMapping() and attemptAutoAccept().
+ */
+function readMappingFromDOM() {
   const map = {};
   for (const tc of TARGET_COLS) {
     const sel = document.getElementById(`sel-${tc.key}`);
@@ -941,6 +921,11 @@ function applyMapping() {
     const v = parseInt(totalSel.value);
     if (v >= 0) map.total_hrs = v;
   }
+  return map;
+}
+
+function applyMapping() {
+  const map = readMappingFromDOM();
   currentMapping = map;
 
   const rigNum = parseInt(document.getElementById('metaRig').value) || currentRigNum;
@@ -1049,7 +1034,7 @@ function acceptData() {
   const result = mergeRowsIntoRig(rigStore, rigNum, currentExtractedRows, sourceLabel, currentFileName);
   Object.assign(rigStore, result.store);
 
-  updateRigList();
+  buildRigList();
   updateStats();
   autoSave();
   log(`Rig ${rigNum}: +${result.newDays} new days, ${result.mergedDays} merged. Total: ${rigStore[rigNum].rows.length} days.`, 'ok');
@@ -1180,8 +1165,6 @@ function buildRigList() {
     el.appendChild(div);
   }
 }
-
-function updateRigList() { buildRigList(); }
 
 function selectRig(rig) {
   document.querySelectorAll('.rig-item').forEach(el => el.classList.remove('active'));

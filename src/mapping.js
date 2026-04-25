@@ -1,5 +1,66 @@
 import { safeStr } from './utils.js';
 
+/**
+ * Merge formatted and raw header rows into a single normalised header array.
+ *
+ * Spreadsheet parsers sometimes produce a "formatted" row where date-valued
+ * cells render as "01/02/2026" instead of the original header text. This
+ * function detects that case (fmtRow cell looks like a date, rawRow cell does
+ * NOT start with a digit) and keeps the raw text instead.
+ *
+ * @param {any[]} fmtRow - Formatted header row (may contain date-formatted cells)
+ * @param {any[]} rawRow - Raw header row (cell values before number-formatting)
+ * @returns {string[]} Normalised header row safe to pass to autoMapHeaders()
+ */
+export function normalizeHeaderRow(fmtRow = [], rawRow = []) {
+  const maxLen = Math.max(fmtRow.length, rawRow.length);
+  const hRow = [];
+  for (let i = 0; i < maxLen; i++) {
+    const fv = safeStr(fmtRow[i]).replace(/\n/g, ' ');
+    const rv = safeStr(rawRow[i]).replace(/\n/g, ' ');
+    // When the formatted cell looks like a date (e.g. "01/02/2026") but the
+    // raw cell holds real header text, prefer the raw value.
+    if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(fv) && rv && !/^\d/.test(rv)) {
+      hRow.push(rv);
+    } else if (!fv && rv) {
+      hRow.push(rv);
+    } else {
+      hRow.push(fv || rv);
+    }
+  }
+  return hRow;
+}
+
+/**
+ * Scan the row immediately above the header for two-row combined headings.
+ *
+ * Some sheets split a single logical column header across two rows, e.g.:
+ *   row N−1:  "Total"        row N:  "Hrs"   → total_hrs
+ *   row N−1:  "Operation"    row N:  "Hrs"   → operation (fallback)
+ *
+ * Mutates `detected` in-place and returns it for convenience.
+ *
+ * @param {Object}   detected  - autoMapHeaders result (mutated)
+ * @param {string[]} prevRow   - Row above the header, values coerced to string
+ * @param {string[]} hRow      - Normalised header row
+ * @param {Function} [log]     - Optional logger (msg, cls) => void
+ * @returns {Object} detected  - Same reference as the input
+ */
+export function applyAboveRowHints(detected, prevRow, hRow, log = () => {}) {
+  for (let c = 0; c < prevRow.length; c++) {
+    if (!prevRow[c] || !hRow[c]) continue;
+    const combined = (prevRow[c] + ' ' + hRow[c]).toLowerCase();
+    if (/(total\s*h|total\s*hrs)/.test(combined) && detected.total_hrs === undefined) {
+      detected.total_hrs = c;
+      log(`  Combined header: Col ${c + 1} = "${prevRow[c]} ${hRow[c]}" -> total_hrs`, 'info');
+    }
+    if (/operation/i.test(combined) && detected.operation === undefined) {
+      detected.operation = c;
+    }
+  }
+  return detected;
+}
+
 export function autoMapHeaders(headerCells) {
   const map = {};
   for (let i = 0; i < headerCells.length; i++) {
