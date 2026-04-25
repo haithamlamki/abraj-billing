@@ -18,6 +18,12 @@ import {
   buildJsonExportPayload, parseJsonImport,
 } from './state/storage.js';
 import { createOcrRunner } from './pipeline/ocr.js';
+import {
+  createBatch, startBatch, addToBatch, recordSuccess, recordReview,
+  pauseBatch as pauseBatchState, resumeBatch as resumeBatchState,
+  finishBatch, resetBatch as resetBatchState, isRunning,
+  batchProgress,
+} from './state/batch.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -54,26 +60,12 @@ let billingYear = new Date().getFullYear();
 const LAST_CONFLICTS = { rigNum: null, conflicts: [] };
 
 // Batch mode: drop many files, auto-accept high-confidence extractions end-to-end.
-const batchMode = {
-  active: false,
-  total: 0,
-  processed: 0,
-  autoAccepted: 0,
-  needsReview: 0,
-  paused: false,
-  reviews: [], // { file, rig, reason }
-  startedAt: 0,
-};
+// State + transitions live in src/state/batch.js; this module owns the single
+// instance and re-renders the banner whenever a transition fires.
+const batchMode = createBatch();
 
 function resetBatch() {
-  batchMode.active = false;
-  batchMode.total = 0;
-  batchMode.processed = 0;
-  batchMode.autoAccepted = 0;
-  batchMode.needsReview = 0;
-  batchMode.paused = false;
-  batchMode.reviews = [];
-  batchMode.startedAt = 0;
+  resetBatchState(batchMode);
   renderBatchBanner();
 }
 
@@ -130,11 +122,7 @@ function renderBatchBanner() {
   }
   el.style.display = '';
   const { total, processed, autoAccepted, needsReview, paused } = batchMode;
-  const pct = total ? Math.round((processed / total) * 100) : 0;
-  const elapsedMs = batchMode.startedAt ? Date.now() - batchMode.startedAt : 0;
-  const perFile = processed > 0 ? elapsedMs / processed : 0;
-  const remaining = total - processed;
-  const etaSec = remaining > 0 && perFile > 0 ? Math.max(1, Math.round(remaining * perFile / 1000)) : 0;
+  const { pct, remaining, etaSec } = batchProgress(batchMode);
   const etaTxt = remaining === 0 ? '' : ` · ~${etaSec < 60 ? etaSec + 's' : Math.round(etaSec / 60) + 'm'} left`;
   const action = paused ? '<button class="btn btn-sm" id="batchResume">Resume</button>' : '<button class="btn btn-sm" id="batchPause">Pause</button>';
   el.innerHTML = `
@@ -176,13 +164,13 @@ function renderBatchDone() {
 }
 
 function pauseBatch() {
-  batchMode.paused = true;
+  pauseBatchState(batchMode);
   log('Batch paused. Current file will finish, then wait.', 'info');
   renderBatchBanner();
 }
 
 function resumeBatch() {
-  batchMode.paused = false;
+  resumeBatchState(batchMode);
   log('Batch resumed.', 'info');
   renderBatchBanner();
   if (fileQueue.length > 0) {
@@ -200,17 +188,10 @@ async function handleFiles(files) {
   log(`${files.length} file(s) queued. Total in queue: ${fileQueue.length}`, 'info');
 
   // Activate batch mode when >1 file is dropped, or when additional files land during an active batch.
-  const shouldBatch = files.length > 1 || (batchMode.active && !batchMode.paused);
+  const shouldBatch = files.length > 1 || isRunning(batchMode);
   if (shouldBatch) {
-    if (!batchMode.active) {
-      batchMode.active = true;
-      batchMode.startedAt = Date.now();
-      batchMode.processed = 0;
-      batchMode.autoAccepted = 0;
-      batchMode.needsReview = 0;
-      batchMode.reviews = [];
-    }
-    batchMode.total += files.length;
+    if (!batchMode.active) startBatch(batchMode, files.length);
+    else addToBatch(batchMode, files.length);
     renderBatchBanner();
   }
 
@@ -231,7 +212,7 @@ async function processNextFile() {
   if (fileQueue.length === 0) {
     if (batchMode.active) {
       log(`Batch done: ${batchMode.autoAccepted} auto-accepted, ${batchMode.needsReview} need review`, batchMode.needsReview ? 'info' : 'ok');
-      batchMode.active = false;
+      finishBatch(batchMode);
       renderBatchDone();
       setStep(1);
     } else {
@@ -258,8 +239,7 @@ async function processNextFile() {
   if (isMove || isDocusign || isTicketOnly) {
     log(`  Skipping non-billing file: ${fname}`, 'info');
     if (batchMode.active) {
-      batchMode.processed++;
-      batchMode.autoAccepted++; // count as "handled" so the batch progresses
+      recordSuccess(batchMode); // count as "handled" so the batch progresses
       renderBatchBanner();
     }
     await processNextFile();
@@ -282,9 +262,7 @@ async function processNextFile() {
   } else {
     log(`Unsupported: ${file.name}`, 'err');
     if (batchMode.active) {
-      batchMode.needsReview++;
-      batchMode.processed++;
-      batchMode.reviews.push({ file: file.name, rig: currentRigNum, reason: 'unsupported extension' });
+      recordReview(batchMode, file.name, currentRigNum, 'unsupported extension');
       renderBatchBanner();
     }
     await processNextFile();
@@ -345,9 +323,7 @@ function parseExcel(buf) {
     renderReviewQueue();
 
     if (batchMode.active) {
-      batchMode.needsReview++;
-      batchMode.processed++;
-      batchMode.reviews.push({ file: currentFileName, rig: currentRigNum, reason: 'no billing sheets detected' });
+      recordReview(batchMode, currentFileName, currentRigNum, 'no billing sheets detected');
       renderBatchBanner();
       processNextFile().catch(e => log('Batch error: ' + e.message, 'err'));
     }
@@ -500,9 +476,7 @@ async function parsePDF(buf) {
   } catch (e) {
     log(`PDF error: ${e.message}`, 'err');
     if (batchMode.active) {
-      batchMode.processed++;
-      batchMode.needsReview++;
-      batchMode.reviews.push({ file: currentFileName, rig: currentRigNum, reason: 'PDF parse error' });
+      recordReview(batchMode, currentFileName, currentRigNum, 'PDF parse error');
       renderBatchBanner();
     }
     finishBatchOrContinue().catch(err => log('Batch error: ' + err.message, 'err'));
@@ -568,9 +542,7 @@ function showPreview() {
  */
 async function attemptAutoAccept() {
   const bailToReview = (reason) => {
-    batchMode.needsReview++;
-    batchMode.processed++;
-    batchMode.reviews.push({ file: currentFileName, rig: currentRigNum, reason });
+    recordReview(batchMode, currentFileName, currentRigNum, reason);
     renderBatchBanner();
     log(`  ⚠ ${currentFileName}: ${reason} — leaving for manual review`, 'err');
     // Deactivate batch *for this file*: user must click Save & continue. When they do,
@@ -657,8 +629,7 @@ async function attemptAutoAccept() {
   }
 
   // Clean success.
-  batchMode.autoAccepted++;
-  batchMode.processed++;
+  recordSuccess(batchMode);
   renderBatchBanner();
   log(`  ✓ ${currentFileName}: Rig ${currentRigNum} auto-accepted (+${result.newDays} new / ${result.mergedDays} merged, confidence ${confidence.score}%)`, 'ok');
 
@@ -692,7 +663,7 @@ async function finishBatchOrContinue() {
   // Queue drained.
   if (batchMode.active) {
     log(`Batch done: ${batchMode.autoAccepted} auto-accepted, ${batchMode.needsReview} need review`, batchMode.needsReview ? 'info' : 'ok');
-    batchMode.active = false;
+    finishBatch(batchMode);
     renderBatchDone();
     setStep(1);
   }
@@ -841,9 +812,7 @@ async function autoProcessCurrentFile() {
   if (sheetNames.length === 0) {
     log(`  ${currentFileName}: no billing sheets`, 'err');
     if (batchMode.active) {
-      batchMode.processed++;
-      batchMode.needsReview++;
-      batchMode.reviews.push({ file: currentFileName, rig: currentRigNum, reason: 'no billing sheets' });
+      recordReview(batchMode, currentFileName, currentRigNum, 'no billing sheets');
       renderBatchBanner();
     }
     await finishBatchOrContinue();
@@ -894,9 +863,8 @@ async function autoProcessCurrentFile() {
 
   // Update batch counters.
   if (batchMode.active) {
-    batchMode.processed++;
-    if (fileHadIssue) batchMode.needsReview++;
-    else batchMode.autoAccepted++;
+    if (fileHadIssue) recordReview(batchMode, currentFileName, currentRigNum, 'sheet-level issue');
+    else recordSuccess(batchMode);
     renderBatchBanner();
   }
 
@@ -1628,7 +1596,7 @@ function advanceToNext(rigNum) {
   // Queue drained.
   if (batchMode.active) {
     log(`Batch done: ${batchMode.autoAccepted} auto-accepted, ${batchMode.needsReview} need review`, batchMode.needsReview ? 'info' : 'ok');
-    batchMode.active = false;
+    finishBatch(batchMode);
     renderBatchDone();
     setStep(1);
     return;
