@@ -60,6 +60,15 @@ export function autoMapHeaders(headerCells) {
     if (/obm/i.test(t) && /(bd|break)/.test(t)) { map.obm_bd = i; continue; }
     if (/obm/i.test(t) && /spe/.test(t)) { map.obm_spe = i; continue; }
     if (/obm/i.test(t) && /zero/.test(t)) { map.obm_zero = i; continue; }
+    // Bare "OBM" with no sub-category. Several PDFs (Rigs 104, 201, 202, 208,
+    // 304) collapse OBM hours into one or more unlabeled columns. Default them
+    // to obm_oper and accumulate across columns so nothing is silently dropped.
+    if (/^obm$/i.test(tNoSpace)) {
+      if (map.obm_oper === undefined) map.obm_oper = i;
+      else if (Array.isArray(map.obm_oper)) map.obm_oper.push(i);
+      else map.obm_oper = [map.obm_oper, i];
+      continue;
+    }
 
     // Note: bare "OPERATION" / "OPERATIONS" is ambiguous (could be hours or
     // text). Resolved in the post-pass below.

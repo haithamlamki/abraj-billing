@@ -63,6 +63,31 @@ describe('autoMapHeaders', () => {
     expect(map.operation).toBe(6);
   });
 
+  it('falls back bare "OBM" column to obm_oper (Rigs 104, 202, 208)', () => {
+    const headers = ['Date', 'Operating', 'OBM', 'Reduced', 'Total'];
+    const map = autoMapHeaders(headers);
+    expect(map.obm_oper).toBe(2);
+  });
+
+  it('accumulates multiple bare "OBM" columns into obm_oper (Rig 304 schema)', () => {
+    const headers = ['DATE', 'BREAKDOWN', 'OBM', 'OBM', 'OBM', 'OPERATING', 'REDUCED', 'TOTAL', 'DESCRIPTION'];
+    const map = autoMapHeaders(headers);
+    expect(map.obm_oper).toEqual([2, 3, 4]);
+    expect(map.breakdown).toBe(1);
+    expect(map.operating).toBe(5);
+    expect(map.reduced).toBe(6);
+  });
+
+  it('keeps explicit OBM sub-categories (does not collide with bare-OBM fallback)', () => {
+    const headers = ['Date', 'Operating', 'OBM Oper', 'OBM Red', 'OBM BD', 'OBM Spe', 'OBM Zero'];
+    const map = autoMapHeaders(headers);
+    expect(map.obm_oper).toBe(2);  // single, from explicit "OBM Oper"
+    expect(map.obm_red).toBe(3);
+    expect(map.obm_bd).toBe(4);
+    expect(map.obm_spe).toBe(5);
+    expect(map.obm_zero).toBe(6);
+  });
+
   it('maps Medco/YASMEEN schema — EQUIPMENT → repair, OPERATION → operating', () => {
     const headers = ['DATE', 'EQUIPMENT', 'OPERATION', 'STAND', 'TOTAL', 'DESCRIPTION'];
     const map = autoMapHeaders(headers);
