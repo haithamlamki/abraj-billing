@@ -19,6 +19,7 @@ import {
 } from './state/storage.js';
 import { createOcrRunner } from './pipeline/ocr.js';
 import { parsePdfBuffer } from './pipeline/parsePdf.js';
+import { parseExcelBuffer } from './pipeline/parseExcel.js';
 import {
   ensureRig, getRig, setRigMeta, setRigMetaFallback, addFileToRig,
   replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
@@ -284,32 +285,19 @@ function getQueueStatus() {
 
 function parseExcel(buf) {
   log(`Loading: ${currentFileName}`, 'info');
-  const wb = XLSX.read(buf, { type: 'array', cellDates: true, raw: false });
-  const wbRaw = XLSX.read(buf, { type: 'array', cellDates: false, raw: true });
+  const { sheets, billingSheetNames } = parseExcelBuffer(buf, { XLSX, log });
+  currentRawSheets = sheets;
 
-  currentRawSheets = {};
   const sheetSel = document.getElementById('sheetSelect');
   sheetSel.innerHTML = '';
-
-  const billingSheets = [];
-  for (const sn of wb.SheetNames) {
-    if (/diesel|discount|ticket|fuel|4%/i.test(sn)) continue;
-    const formatted = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: null, raw: false });
-    const raw = XLSX.utils.sheet_to_json(wbRaw.Sheets[sn], { header: 1, defval: null, raw: true });
-    const hr = findHeaderRow(formatted.length ? formatted : raw);
-    if (hr >= 0 || formatted.length > 5) {
-      currentRawSheets[sn] = { formatted, raw };
-      billingSheets.push(sn);
-      const opt = document.createElement('option');
-      opt.value = sn;
-      opt.textContent = sn;
-      sheetSel.appendChild(opt);
-    } else {
-      log(`  Skipping sheet "${sn}" (no billing table found)`, 'info');
-    }
+  for (const sn of billingSheetNames) {
+    const opt = document.createElement('option');
+    opt.value = sn;
+    opt.textContent = sn;
+    sheetSel.appendChild(opt);
   }
 
-  if (billingSheets.length === 0) {
+  if (billingSheetNames.length === 0) {
     log(`No billing sheets found in ${currentFileName}`, 'err');
     // Push a minimal review card so the user sees the issue inline.
     reviewQueue.push({
@@ -336,9 +324,9 @@ function parseExcel(buf) {
     return;
   }
 
-  log(`Found ${billingSheets.length} billing sheet(s): ${billingSheets.join(', ')}`, 'info');
+  log(`Found ${billingSheetNames.length} billing sheet(s): ${billingSheetNames.join(', ')}`, 'info');
   pendingSheets = []; // autoProcessCurrentFile iterates all sheets itself
-  currentSheetName = billingSheets[0];
+  currentSheetName = billingSheetNames[0];
   autoProcessCurrentFile().catch(e => log('Auto-process error: ' + e.message, 'err'));
 }
 
