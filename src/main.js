@@ -20,6 +20,11 @@ import {
 import { createOcrRunner } from './pipeline/ocr.js';
 import { parsePdfBuffer } from './pipeline/parsePdf.js';
 import {
+  ensureRig, getRig, setRigMeta, setRigMetaFallback, addFileToRig,
+  replaceRowByDate, appendRowIfNew, sortRowsByDate, restoreRig,
+  clearRigs, aggregateStats, hasData, updateRigMetaFields,
+} from './state/rigStore.js';
+import {
   createBatch, startBatch, addToBatch, recordSuccess, recordReview,
   pauseBatch as pauseBatchState, resumeBatch as resumeBatchState,
   finishBatch, resetBatch as resetBatchState, isRunning,
@@ -501,8 +506,7 @@ async function attemptAutoAccept() {
   const isPDF = /\.pdf$/i.test(currentFileName);
   const sourceLabel = isPDF ? 'PDF (approved)' : 'Excel';
 
-  if (!rigStore[currentRigNum]) rigStore[currentRigNum] = { meta: {}, rows: [], files: [] };
-  rigStore[currentRigNum].meta = { customer: cust, well, contract, po };
+  setRigMeta(rigStore, currentRigNum, { customer: cust, well, contract, po });
 
   const result = mergeRowsIntoRig(rigStore, currentRigNum, rows, sourceLabel, currentFileName);
   Object.assign(rigStore, result.store);
@@ -673,15 +677,7 @@ function pushReviewCard(extraction, fileName, extraIssues = []) {
 
 function mergeExtractionSilently(extraction, fileName) {
   if (!extraction.rig) return { ok: false, conflicts: [] };
-  if (!rigStore[extraction.rig]) {
-    rigStore[extraction.rig] = { meta: {}, rows: [], files: [] };
-  }
-  rigStore[extraction.rig].meta = {
-    customer: extraction.meta.customer || rigStore[extraction.rig].meta.customer || RIG_CUST[extraction.rig] || 'PDO',
-    well: extraction.meta.well || rigStore[extraction.rig].meta.well || '',
-    contract: extraction.meta.contract || rigStore[extraction.rig].meta.contract || '',
-    po: extraction.meta.po || rigStore[extraction.rig].meta.po || '',
-  };
+  setRigMetaFallback(rigStore, extraction.rig, extraction.meta, { customer: 'PDO' });
 
   const sourceLabel = /\.pdf$/i.test(fileName) ? 'PDF (approved)' : 'Excel';
   const result = mergeRowsIntoRig(rigStore, extraction.rig, extraction.rows, sourceLabel, fileName);
@@ -1008,8 +1004,7 @@ function extractAllSheets() {
       log(`  Sheet "${sn}": no rows extracted, skipping`, 'info');
       continue;
     }
-    if (!rigStore[rigNum]) rigStore[rigNum] = { meta: {}, rows: [], files: [] };
-    rigStore[rigNum].meta = { customer: cust, well: well || sn, contract, po };
+    setRigMeta(rigStore, rigNum, { customer: cust, well: well || sn, contract, po });
 
     const sourceLabel = isPDF ? 'PDF (approved)' : 'Excel';
     const result = mergeRowsIntoRig(rigStore, rigNum, currentExtractedRows, sourceLabel, null);
@@ -1019,7 +1014,7 @@ function extractAllSheets() {
     log(`  Sheet "${sn}": +${result.newDays} new, ${result.mergedDays} merged`, 'ok');
   }
 
-  if (!rigStore[rigNum].files.includes(currentFileName)) rigStore[rigNum].files.push(currentFileName);
+  addFileToRig(rigStore, rigNum, currentFileName);
 
   updateRigList();
   updateStats();
@@ -1433,8 +1428,7 @@ function acceptData() {
   const contract = document.getElementById('metaContract').value;
   const po = document.getElementById('metaPO').value;
 
-  if (!rigStore[rigNum]) rigStore[rigNum] = { meta: {}, rows: [], files: [] };
-  rigStore[rigNum].meta = { customer: cust, well, contract, po };
+  setRigMeta(rigStore, rigNum, { customer: cust, well, contract, po });
 
   const isPDF = /\.pdf$/i.test(currentFileName);
   const sourceLabel = isPDF ? 'PDF (approved)' : 'Excel';
@@ -1494,8 +1488,7 @@ function advanceToNext(rigNum) {
 }
 
 function replaceRigRowFromConflict(rigNum, c, source) {
-  if (!rigStore[rigNum]) return;
-  const idx = rigStore[rigNum].rows.findIndex(r => r.date === c.date);
+  if (!getRig(rigStore, rigNum)) return;
   let chosen = null;
   let chosenSource = 'Manual';
   if (source === 'pdf') {
@@ -1505,11 +1498,10 @@ function replaceRigRowFromConflict(rigNum, c, source) {
     if (String(c.newSource || '').includes('Excel')) { chosen = c.newRow; chosenSource = 'Excel'; }
     else if (String(c.existingSource || '').includes('Excel')) { chosen = c.existing; chosenSource = 'Excel'; }
   }
-  if (chosen && idx >= 0) {
-    const clean = { ...chosen };
-    clean._source = chosenSource;
+  if (chosen) {
+    const clean = { ...chosen, _source: chosenSource };
     clean.total_hrs = rowTotal(clean);
-    rigStore[rigNum].rows[idx] = clean;
+    replaceRowByDate(rigStore, rigNum, clean);
   }
 }
 
@@ -1518,9 +1510,7 @@ function resolveAllConflicts(rigNum, strategy) {
   if (strategy === 'manual') { selectRig(rigNum); return; }
   if (strategy === 'pdf' || strategy === 'excel') {
     for (const c of conflicts) replaceRigRowFromConflict(rigNum, c, strategy);
-    if (rigStore[rigNum]) {
-      rigStore[rigNum].rows.sort((a, b) => (parseDate(a.date) || 0) - (parseDate(b.date) || 0));
-    }
+    sortRowsByDate(rigStore, rigNum);
   }
   autoSave();
   buildRigList();
@@ -1542,7 +1532,7 @@ function showConflicts(rigNum, conflicts) {
     <table class="result-table" style="min-width:auto"><thead><tr><th>Date</th><th>Existing Source</th><th>Existing Hrs</th><th>New Source</th><th>New Hrs</th><th>Diff</th><th>Current Merged</th><th>Recommended</th></tr></thead><tbody>`;
   for (const c of conflicts) {
     const diff = (safeNum(c.newTotal) - safeNum(c.existingTotal)).toFixed(1);
-    const merged = rigStore[rigNum]?.rows.find(r => r.date === c.date);
+    const merged = getRig(rigStore, rigNum)?.rows.find(r => r.date === c.date);
     const mergedTotal = merged ? rowTotal(merged) : 0;
     const rec = (String(c.newSource || '').includes('PDF') || String(c.existingSource || '').includes('PDF')) ? 'Use PDF' : 'Manual Review';
     html += `<tr class="conf-row"><td style="white-space:nowrap">${c.date}</td><td>${c.existingSource || ''}</td><td class="num">${fmtNum(c.existingTotal, 1)}h</td><td>${c.newSource || ''}</td><td class="num">${fmtNum(c.newTotal, 1)}h</td><td class="num" style="color:var(--red)">${diff > 0 ? '+' : ''}${diff}h</td><td class="num" style="font-weight:700;color:var(--cyan)">${fmtNum(mergedTotal, 1)}h</td><td>${rec}</td></tr>`;
@@ -1655,9 +1645,10 @@ function selectRig(rig) {
   document.getElementById('metaRig').value = rig;
   document.getElementById('metaCust').value = RIG_CUST[rig] || 'PDO';
 
-  if (rigStore[rig] && rigStore[rig].rows.length > 0) {
-    currentExtractedRows = rigStore[rig].rows;
-    showResult(rig, rigStore[rig].meta.customer, rigStore[rig].meta.well, rigStore[rig].meta.contract, rigStore[rig].meta.po, rigStore[rig].rows);
+  const entry = getRig(rigStore, rig);
+  if (entry && entry.rows.length > 0) {
+    currentExtractedRows = entry.rows;
+    showResult(rig, entry.meta.customer, entry.meta.well, entry.meta.contract, entry.meta.po, entry.rows);
   } else {
     setStep(1);
   }
@@ -1667,20 +1658,13 @@ function selectRig(rig) {
 // STATS + FLEET OVERVIEW
 // ============================================
 function updateStats() {
-  let rigs = 0, rows = 0, oper = 0;
-  for (const s of Object.values(rigStore)) {
-    if (s.rows.length) {
-      rigs++;
-      rows += s.rows.length;
-      oper += s.rows.reduce((a, r) => a + r.operating, 0);
-    }
-  }
+  const { rigs, rows, operatingHours } = aggregateStats(rigStore);
   const sRigs = document.getElementById('sRigs');
   const sRows = document.getElementById('sRows');
   const sOper = document.getElementById('sOper');
   if (sRigs) sRigs.textContent = rigs;
   if (sRows) sRows.textContent = rows;
-  if (sOper) sOper.textContent = oper.toFixed(0);
+  if (sOper) sOper.textContent = operatingHours.toFixed(0);
   updateFleetOverview();
   scheduleSummaryRefresh();
 }
@@ -1811,7 +1795,7 @@ function importJSONFile(file) {
       if (result.billingMonth) billingMonth = result.billingMonth;
       if (result.billingYear) billingYear = result.billingYear;
       updateMonthYearUI();
-      for (const k of Object.keys(rigStore)) delete rigStore[k];
+      clearRigs(rigStore);
       Object.assign(rigStore, result.rigs);
       buildRigList();
       updateStats();
@@ -1828,7 +1812,7 @@ function importJSONFile(file) {
 
 function clearAll() {
   if (!confirm('Are you sure you want to clear ALL extracted data for all rigs? This cannot be undone.')) return;
-  for (const k of Object.keys(rigStore)) delete rigStore[k];
+  clearRigs(rigStore);
   buildRigList();
   updateStats();
   setStep(1);
@@ -1866,11 +1850,11 @@ function autoLoad() {
   for (const [rig, data] of Object.entries(saved.rigs)) {
     const rigNum = parseInt(rig);
     if (!RIGS.includes(rigNum)) continue;
-    rigStore[rigNum] = {
+    restoreRig(rigStore, rigNum, {
       meta: data.meta || {},
       rows: data.rows || [],
       files: data.files || ['localStorage'],
-    };
+    });
     count++;
   }
   if (count === 0) return false;
@@ -1905,19 +1889,19 @@ async function loadConsolidated(buf) {
   for (const row of data) {
     const rig = parseInt(row.Rig || row.rig);
     if (!rig || !RIGS.includes(rig)) continue;
-    if (!rigStore[rig]) {
-      rigStore[rig] = { meta: { customer: '', well: '', contract: '', po: '' }, rows: [], files: ['consolidated'] };
-    }
-    rigStore[rig].meta.customer = safeStr(row.Customer || row.customer) || RIG_CUST[rig] || '';
-    if (row.Well || row.well) rigStore[rig].meta.well = safeStr(row.Well || row.well);
-    if (row['Contract No']) rigStore[rig].meta.contract = safeStr(row['Contract No']);
-    if (row['P.O']) rigStore[rig].meta.po = safeStr(row['P.O']);
+    const entry = ensureRig(rigStore, rig);
+    if (entry.files.length === 0) entry.files.push('consolidated');
+    updateRigMetaFields(rigStore, rig, {
+      customer: safeStr(row.Customer || row.customer) || RIG_CUST[rig] || '',
+      well: row.Well || row.well,
+      contract: row['Contract No'],
+      po: row['P.O'],
+    });
     const dateStr = toDateStr(row.Date || row.date, billingYear, billingMonth);
     if (!dateStr) continue;
     const expectedSuffix = `-${getMonthName(billingMonth)}-${billingYear}`;
     if (!dateStr.endsWith(expectedSuffix)) continue;
-    if (rigStore[rig].rows.some(r => r.date === dateStr)) continue;
-    rigStore[rig].rows.push({
+    const inserted = appendRowIfNew(rigStore, rig, {
       date: dateStr,
       operating: safeNum(row.Operating || row.operating),
       reduced: safeNum(row.Reduced || row.reduced),
@@ -1938,13 +1922,9 @@ async function loadConsolidated(buf) {
       total_hrs_repair: safeNum(row['Total Hours Repair'] || row.total_hrs_repair),
       remarks: safeStr(row.Remarks || row.remarks),
     });
-    count++;
+    if (inserted) count++;
   }
-  for (const rig of RIGS) {
-    if (rigStore[rig]) {
-      rigStore[rig].rows.sort((a, b) => (parseDate(a.date) || 0) - (parseDate(b.date) || 0));
-    }
-  }
+  for (const rig of RIGS) sortRowsByDate(rigStore, rig);
   log(`Loaded ${count} rows from consolidated file`, 'ok');
   buildRigList();
   updateStats();
