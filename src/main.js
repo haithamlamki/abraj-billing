@@ -18,6 +18,7 @@ import {
   buildJsonExportPayload, parseJsonImport,
 } from './state/storage.js';
 import { createOcrRunner } from './pipeline/ocr.js';
+import { parsePdfBuffer } from './pipeline/parsePdf.js';
 import {
   createBatch, startBatch, addToBatch, recordSuccess, recordReview,
   pauseBatch as pauseBatchState, resumeBatch as resumeBatchState,
@@ -343,132 +344,19 @@ const { ocrPageToItems } = ocrRunner;
 async function parsePDF(buf) {
   log(`Loading PDF: ${currentFileName}`, 'info');
   try {
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-    const allItems = [];
-    let ocredPages = 0;
+    const { rows, columns } = await parsePdfBuffer(buf, { pdfjsLib, ocrPageToItems, log });
 
-    for (let p = 1; p <= pdf.numPages; p++) {
-      const page = await pdf.getPage(p);
-      const tc = await page.getTextContent();
-      const textItems = tc.items || [];
-
-      // Heuristic: detect "scanned" PDFs that pdf.js still emits some text for.
-      //  - completely empty → certainly scanned
-      //  - very sparse (< 30 items) AND average token < 3 chars → likely scanned/forms
-      //  - very few alphanumeric "real" tokens → custom-encoded font (glyph soup)
-      const trimmed = textItems.map(it => (it.str || '').trim()).filter(Boolean);
-      const realTokens = trimmed.filter(t => /[a-zA-Z0-9]{3,}/.test(t));
-      const avgLen = trimmed.length ? trimmed.reduce((s, t) => s + t.length, 0) / trimmed.length : 0;
-      const looksScanned = textItems.length === 0
-        || (trimmed.length < 30 && avgLen < 3)
-        || (trimmed.length > 0 && realTokens.length < Math.max(5, trimmed.length * 0.1));
-
-      if (looksScanned) {
-        log(`  Page ${p}: ${textItems.length === 0 ? 'no embedded text' : `${trimmed.length} weak tokens (${realTokens.length} real)`}, running OCR…`, 'info');
-        const ocrItems = await ocrPageToItems(page, p);
-        allItems.push(...ocrItems);
-        ocredPages++;
-        log(`  Page ${p}: OCR extracted ${ocrItems.length} words`, 'info');
-        continue;
-      }
-
-      for (const item of textItems) {
-        if (!item.str.trim()) continue;
-        allItems.push({
-          x: Math.round(item.transform[4]),
-          y: Math.round(item.transform[5]),
-          text: item.str.trim(),
-          page: p,
-        });
-      }
+    if (rows.length === 0) {
+      log(columns.length === 0 ? 'No text in PDF' : 'No rows extracted from PDF', 'err');
+      return;
     }
 
-    if (ocredPages > 0) {
-      log(`  OCR complete for ${ocredPages} page(s)`, 'ok');
+    log(`PDF parsed: ${rows.length} rows, ${columns.length} columns detected`, 'info');
+    if (columns.length > 0) {
+      log(`PDF columns: ${columns.map(c => c.text).join(' | ')}`, 'info');
     }
 
-    if (allItems.length === 0) { log('No text in PDF', 'err'); return; }
-
-    const yGroups = {};
-    for (const item of allItems) {
-      let foundY = null;
-      for (const yk of Object.keys(yGroups)) {
-        if (Math.abs(Number(yk) - item.y) <= 3) { foundY = yk; break; }
-      }
-      const key = foundY || item.y;
-      if (!yGroups[key]) yGroups[key] = [];
-      yGroups[key].push(item);
-    }
-
-    const sortedYs = Object.keys(yGroups).map(Number).sort((a, b) => b - a);
-
-    let tableHeaderY = null;
-    for (const y of sortedYs) {
-      const rowText = yGroups[y].map(i => i.text).join(' ').toLowerCase();
-      if (/\bdate\b/.test(rowText) && /operat|total|hours/.test(rowText)) {
-        tableHeaderY = y;
-        break;
-      }
-    }
-
-    let colXs = [];
-    if (tableHeaderY !== null) {
-      const hItems = yGroups[tableHeaderY].sort((a, b) => a.x - b.x);
-      const knownHeaders = /^(date|operating|reduced|breakdown|special|rigmove|rig move|total|hours|description|statistical|rate|zero|force|standby|repair|obm|upgrade|sbm)$/i;
-      for (const item of hItems) {
-        const prev = colXs.length > 0 ? colXs[colXs.length - 1] : null;
-        if (prev) {
-          const gap = item.x - prev.x;
-          const merged = (prev.text + item.text).replace(/[\s\-]/g, '');
-          const formsKnown = knownHeaders.test(merged);
-          const isFragment = item.text.replace(/[\s\.\-]/g, '').length <= 2;
-          const isTiny = gap < 15;
-          if (formsKnown || isFragment || isTiny) {
-            prev.text += item.text;
-            continue;
-          }
-        }
-        colXs.push({ x: item.x, text: item.text });
-      }
-      log(`  PDF columns after merge: ${colXs.map(c => c.text).join(' | ')}`, 'info');
-    }
-
-    const allRows = [];
-    for (const y of sortedYs) {
-      const items = yGroups[y].sort((a, b) => a.x - b.x);
-      if (colXs.length >= 3) {
-        const row = new Array(colXs.length).fill('');
-        for (const item of items) {
-          let col = 0;
-          for (let c = colXs.length - 1; c >= 0; c--) {
-            if (item.x >= colXs[c].x - 10) { col = c; break; }
-          }
-          row[col] = (row[col] ? row[col] + ' ' : '') + item.text;
-        }
-        for (let c = 0; c < row.length; c++) {
-          if (!row[c]) continue;
-          const cleaned = row[c].replace(/\s+/g, '');
-          if (/^\d+\.?\d*$/.test(cleaned) && row[c].includes(' ')) {
-            row[c] = cleaned;
-          }
-          if (/^\d{1,2}\s*-\s*\d{1,2}\s*-\s*\d{4}$/.test(row[c])) {
-            row[c] = row[c].replace(/\s+/g, '');
-          }
-        }
-        allRows.push(row);
-      } else {
-        allRows.push(items.map(i => i.text));
-      }
-    }
-
-    if (allRows.length === 0) { log('No rows extracted from PDF', 'err'); return; }
-
-    log(`PDF parsed: ${allRows.length} rows, ${colXs.length} columns detected`, 'info');
-    if (colXs.length > 0) {
-      log(`PDF columns: ${colXs.map(c => c.text).join(' | ')}`, 'info');
-    }
-
-    currentRawSheets = { 'PDF': { formatted: allRows, raw: allRows } };
+    currentRawSheets = { 'PDF': { formatted: rows, raw: rows } };
     currentSheetName = 'PDF';
     const sheetSelect = document.getElementById('sheetSelect');
     if (sheetSelect) sheetSelect.innerHTML = '<option>PDF</option>';
