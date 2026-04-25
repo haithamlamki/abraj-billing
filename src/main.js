@@ -39,6 +39,7 @@ import {
   buildTimelineHTML, renderFleetOverview as renderFleetOverviewDOM,
 } from './views/fleetOverview.js';
 import { renderResult as renderResultDOM } from './views/result.js';
+import { renderPreviewTable as renderPreviewTableDOM } from './views/preview.js';
 
 /* global XLSX, pdfjsLib, Chart */
 
@@ -812,64 +813,8 @@ function openMappingOverride(card, idx) {
 }
 
 function renderPreviewTable() {
-  const data = currentRawSheets[currentSheetName].formatted;
-  const rawData = currentRawSheets[currentSheetName].raw;
-  const useData = data && data.length ? data : rawData;
-  const maxRows = Math.min(useData.length, 60);
-
-  const sections = classifyRows(useData, currentHeaderRow);
-
-  let maxCols = 0;
-  for (let r = 0; r < maxRows; r++) {
-    if (useData[r]) maxCols = Math.max(maxCols, useData[r].length);
-  }
-  maxCols = Math.min(maxCols, 20);
-
-  let html = '<table class="preview-table"><thead><tr><th class="row-num">#</th><th style="width:60px">Section</th>';
-  for (let c = 0; c < maxCols; c++) html += `<th>Col ${c + 1}</th>`;
-  html += '</tr></thead><tbody>';
-
-  for (let r = 0; r < maxRows; r++) {
-    const row = useData[r] || [];
-    const isHeader = r === currentHeaderRow;
-
-    let sectionLabel = '';
-    let rowStyle = '';
-    if (currentHeaderRow >= 0) {
-      if (r < currentHeaderRow) {
-        sectionLabel = '<span style="color:var(--blue);font-size:.55rem">HEADER</span>';
-        rowStyle = 'background:rgba(59,130,246,.06)';
-      } else if (r === currentHeaderRow) {
-        sectionLabel = '<span style="color:var(--cyan);font-size:.55rem;font-weight:700">TABLE HDR</span>';
-        rowStyle = 'background:rgba(6,182,212,.15)';
-      } else if (r <= sections.dataEnd) {
-        sectionLabel = '<span style="color:var(--green);font-size:.55rem">DATA</span>';
-      } else {
-        sectionLabel = '<span style="color:var(--text3);font-size:.55rem">FOOTER</span>';
-        rowStyle = 'background:rgba(100,116,139,.08);opacity:.6';
-      }
-    }
-
-    html += `<tr class="${isHeader ? 'header-row' : ''}" data-row="${r}" style="cursor:pointer;${rowStyle}">`;
-    html += `<td class="row-num">${r + 1}</td>`;
-    html += `<td style="text-align:center">${sectionLabel}</td>`;
-    for (let c = 0; c < maxCols; c++) {
-      const v = c < row.length ? safeStr(row[c]).replace(/\n/g, ' ') : '';
-      const display = v.length > 40 ? v.substring(0, 40) + '...' : v;
-      html += `<td title="${v.replace(/"/g, '&quot;')}">${display}</td>`;
-    }
-    html += '</tr>';
-  }
-  if (useData.length > 60) {
-    html += `<tr><td colspan="${maxCols + 2}" style="text-align:center;color:var(--text3)">... ${useData.length - 60} more rows</td></tr>`;
-  }
-  html += '</tbody></table>';
-
-  const scroll = document.getElementById('previewScroll');
-  scroll.innerHTML = html;
-  scroll.querySelectorAll('tr[data-row]').forEach(tr => {
-    tr.addEventListener('click', () => clickRow(parseInt(tr.dataset.row)));
-  });
+  const sheet = currentRawSheets[currentSheetName];
+  renderPreviewTableDOM(sheet.formatted, sheet.raw, currentHeaderRow, clickRow);
 }
 
 function clickRow(rowIdx) {
